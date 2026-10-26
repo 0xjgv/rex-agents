@@ -22,7 +22,7 @@ Reason rejected an attempted self-send. This is an upstream recipient-selection 
 
 ## Pane behavior and navigation
 
-The user's later instruction changed worker and prompt creation from tabs to background panes. Live launches returned `anchor_id` and `split_ids`; the review worker occupied the same window as the launching pane, and the tab count stayed at four. A repeated launch with the same pending name failed without increasing pane count. Tests also assert `--focus=false` and the explicit anchor block.
+The user's later instruction changed worker and prompt creation from tabs to background panes. Live launches returned `anchor_id` and `split_ids`; the review worker occupied the same window as the launching pane, and the tab count stayed at four. A repeated launch with the same pending name failed without increasing pane count. Tests also assert `--focus=false` and the explicit anchor block. The live List Agents action opened a background pane at the explicit anchor, displayed the Reason roster, and left the tab count unchanged; its temporary pane was closed after inspection.
 
 An attempted app focus returned: `Rex.app is not accepting actions. Turn on Remote Control in its Settings under Rex Server.` The user explicitly requested leaving that setting disabled and adding a navigation toggle. Navigation now defaults off, and disabled focus fails before any Rex action. The preference persists across installation. **Enabled app navigation remains fixture-tested, not live-validated.** No claim of live app focus success is made.
 
