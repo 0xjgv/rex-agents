@@ -156,4 +156,4 @@ rex config reload
 
 Removal deletes only this project's hooks, CLI and skill links, Lua module, managed `require` entry, navigation preference, and cache. Existing Reason integrations, active conversations, unrelated configuration, and backups remain intact. Already loaded locator hooks become inert after uninstall.
 
-Source lives in `rex_agents/core.py` (identity, messaging, launch, focus), `rex_agents/install.py` (installation and navigation preference), `rex_agents/cli.py` (commands and diagnostics), `lua/rex_agents.lua` (Rex actions), and `skill/SKILL.md` (agent instructions). Run `python3 -m unittest discover -s tests -v` for regression tests. See `VERIFICATION.md` for measured results and remaining limits, and `EXECPLAN.md` for the implementation decisions.
+Source lives in `rex_agents/core.py` (identity, messaging, launch, focus), `rex_agents/install.py` (installation and navigation preference), `rex_agents/cli.py` (commands and diagnostics), `lua/rex_agents.lua` (Rex actions), and `skill/SKILL.md` (agent instructions). Run `python3 -m unittest discover -s tests -v` for regression tests. See `VERIFICATION.md` for measured results and remaining limits.

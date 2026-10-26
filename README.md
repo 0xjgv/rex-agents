@@ -27,6 +27,6 @@ Navigation defaults off. Rex Remote Control is also intentionally disabled on th
 
 The command palette provides List Agents, Message Agent, Launch Agent, Focus Agent, and Toggle Agent Navigation. Human actions send as Reason's terminal identity; agent CLI sends require verified native identity. There are no default key bindings.
 
-See [VERIFICATION.md](VERIFICATION.md) for measured results and limitations and [EXECPLAN.md](EXECPLAN.md) for decisions. Remote behavior has fixture coverage; live cross-machine validation awaits another enrolled machine.
+See [VERIFICATION.md](VERIFICATION.md) for measured results and limitations. Remote behavior has fixture coverage; live cross-machine validation awaits another enrolled machine.
 
 API references: [Rex actions](https://www.superlogical.com/rex/docs/customize/actions), [Rex Lua API](https://www.superlogical.com/rex/docs/reference/lua), and [Reason CLI and hook source](https://github.com/reason-machines/reason-network/tree/5a6d0835868e1e648bed9144360d29455ebe8e6f/src).
