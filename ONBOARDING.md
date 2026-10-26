@@ -6,9 +6,15 @@ Rex agents connects interactive Claude Code and Codex conversations inside Rex. 
 
 The integration is installed from `/Users/juan/Code/rex-agents`. The `rex-agents` command is linked into `~/.local/bin`. Claude Code and Codex have the integration skill and lifecycle hooks. Reason's native messaging integrations remain responsible for delivery.
 
-Workers open in **background split panes**, beside the launching pane. They do not open new tabs or select a different pane. A split can resize the existing layout and end Rex's zoom mode, even though focus stays unchanged.
+Workers remain native interactive Claude Code or Codex conversations in **background split panes**. Owned launches alternate `right`, `below`, `right`, using the last successful launch direction, even after a worker pane is manually closed. A launch splits the newest live owned pane in the same server, session, and tab, or the driver's pane when none remains. Workers do not open new tabs or take focus. A split can resize the existing layout and end Rex's zoom mode.
 
 **Navigation is off by default. Rex Remote Control is also disabled on this machine.** This lets you move among panes and tabs without agents moving your view. Messaging and worker launches work with navigation off. Live cross-machine behavior has not been validated; no second machine is enrolled.
+
+## Choose the delegation route
+
+When the worker uses the driver's own harness, prefer native subagents if they support the requested model and effort. A Codex driver can use its native subagent tool for Sol work without opening a pane. Claude can use its native subagents for supported Claude work. Native subagents return results through their harness and need no Rex cleanup.
+
+Use `rex-agents launch` when crossing harnesses, when you explicitly want a visible interactive worker, or when native subagents cannot select the requested model and effort. Keep the requested model rather than silently substituting another. The CLI is an explicit pane launcher; the shared skill makes this routing choice before calling it.
 
 ## First use
 
@@ -33,10 +39,18 @@ TASK
 rex-agents launch claude \
   --name reviewer \
   --cwd /Users/juan/Code/rex-agents \
+  --model claude-opus-5-5 --effort xhigh \
   --task-file /tmp/review-task.txt
 ```
 
-Use `codex` instead of `claude` for a Codex worker. The directory must already exist. The launcher creates no worktree and changes no model or permission settings. The initial task is passed once as one prompt argument. Names use letters, digits, underscores, or hyphens, up to 64 characters.
+For cross-harness work, Codex drivers can call Claude workers with `--model claude-opus-5-5 --effort xhigh`. Claude drivers can call Codex workers with `--model gpt-6.1-sol --effort high`:
+
+```sh
+rex-agents launch codex --name helper --cwd /absolute/project \
+  --model gpt-6.1-sol --effort high --task-file /tmp/task.txt
+```
+
+`--model` and `--effort` are independently optional. Omitted values inherit native settings. The native harness validates actual model and effort availability. Selectors apply to this worker and change no global defaults or permissions. The directory must already exist. The launcher creates no worktree. It passes the initial task once as one prompt argument. Names use letters, digits, underscores, or hyphens, up to 64 characters.
 
 The launch result returns pane IDs immediately and says `registration: pending`. Wait for the worker to appear in `rex-agents list` before messaging it. A worker started without a task may not create its native conversation until the first prompt. A new Codex installation may first show its hook trust dialog.
 
@@ -46,6 +60,22 @@ When an agent shell does not export Rex variables, the integration uses that age
 rex-agents --session SESSION_ID --block BLOCK_ID launch codex \
   --name helper --cwd /absolute/project --task-file /tmp/task.txt
 ```
+
+## Collect results and close owned workers
+
+A human-launched Claude Code or Codex conversation can drive one level of owned workers. An owned Rex worker cannot launch more Rex workers. This restriction does not manage native subagents. Ownership follows the driver's native identity, even with explicit Rex context. Missing or conflicting agent identity fails explicitly. Human launches have no agent owner and require manual pane management.
+
+Collect every worker's completed result before cleanup. Save results outside the worker panes when needed. Then run this command from the same driver conversation before its final answer:
+
+```sh
+rex-agents cleanup
+```
+
+Cleanup cancels unfinished owned workers as well as closing completed workers. Only known completed results and saved native transcripts persist. Do not assume unfinished work is safe. Reason activity or a delivery receipt does not prove completion.
+
+Cleanup is local-only and uses the driver's native identity without Reason. It closes only that driver's recorded panes and protects the driver pane and unrelated panes. It prints JSON with `closed`, `gone`, and `uncertain` collections. It exits 0 when `uncertain` is empty, otherwise 1. Unknown pane states remain reserved. A worker resumed elsewhere or a pane reused by another native conversation is also reported as uncertain and left open. Inspect the reported uncertainty, restore Rex access or recover the pane manually, and retry cleanup safely.
+
+No Stop or SessionEnd hook runs cleanup. A driver crash leaves visible panes for manual recovery. Resuming the same native identity retains ownership. Claude `/clear` creates a new identity, so recover the old workers manually. Complete cleanup resets the next batch's direction to `right`.
 
 ## Messages and replies
 
@@ -83,6 +113,8 @@ Search Rex's command palette for these actions:
 
 Prompt panes also open without taking focus. Select the new pane manually to answer. No default keyboard shortcuts are installed.
 
+Model and effort selectors are CLI options. The fixed Lua action arguments remain unchanged. Cleanup is an explicit agent CLI command, with no palette action.
+
 ## Navigation toggle
 
 Check or change this integration's navigation preference:
@@ -111,7 +143,7 @@ A resumed conversation updates its locator. A new conversation in the same pane 
 
 Launch metadata and a short per-machine file lock prevent duplicate active worker names, including workers still registering. A failed command can be retried after a definite failure. A timeout leaves an uncertain reservation because Rex may already have created the pane. Inspect the returned reservation token and Rex block list before retrying; do not submit the initial task twice.
 
-Codex workers use its supported `--no-daemon` option. In the tested version, the shared app server drops the launching terminal's Rex environment before hooks run. The dedicated process preserves hook context without changing model or permission settings. This starts the normal interactive agent, not another integration service.
+Codex workers use its supported `--no-daemon` option. In the tested version, the shared app server drops the launching terminal's Rex environment before hooks run. The dedicated process preserves hook context and native interactivity. Optional model and effort selectors apply to the worker without changing permission settings or global defaults. This starts the normal interactive agent, not another integration service.
 
 ## Install on another machine
 
@@ -130,7 +162,9 @@ rex-agents launch codex --name remote-reviewer \
   --cwd /absolute/path/on/remote --task-file /tmp/task.txt --host HOST_LABEL
 ```
 
-The task is sent through Rex; the directory is interpreted on the remote machine. The remote installation uses its own agent settings. With several remote sessions, invoke Launch Agent in the intended session. Discovery asks each configured host for its local registry through the existing authenticated Rex connection. There is no new network listener.
+The task is sent through Rex; the directory is interpreted on the remote machine. The remote installation uses its own agent settings. Remote launch rejects `--model` and `--effort`; remote cleanup is unsupported. Manage remote worker panes manually. With several remote sessions, invoke Launch Agent in the intended session. Discovery asks each configured host for its local registry through the existing authenticated Rex connection. There is no new network listener.
+
+CLI and skill files are symlinks into this checkout. The lifecycle changes need no new dependencies or installation steps on this existing setup. Lua and hook definitions remain unchanged.
 
 ## Troubleshooting
 

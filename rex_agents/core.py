@@ -83,18 +83,44 @@ def identity_env(kind, native_id):
     return env
 
 
-def native_identity():
+def native_identity(*, allow_human=False):
     codex = os.environ.get("CODEX_THREAD_ID")
+    hook_kind = os.environ.get("REX_AGENTS_KIND")
+    hook_id = os.environ.get("REX_AGENTS_NATIVE_ID")
+    if ((hook_kind is not None or hook_id is not None)
+            and (hook_kind not in ("codex", "claude-code") or not hook_id)):
+        raise Error("Incomplete or invalid native agent identity")
+    if hook_kind == "codex":
+        if codex and codex != hook_id:
+            raise Error("Conflicting inherited agent identities")
+        codex = hook_id
     # SessionStart refreshes this hook identity after Claude /clear as well as resume.
-    claude = (os.environ.get("REX_AGENTS_NATIVE_ID")
-              if os.environ.get("REX_AGENTS_KIND") == "claude-code" else None)
+    claude = hook_id if hook_kind == "claude-code" else None
     claude = claude or os.environ.get("CLAUDE_CODE_SESSION_ID")
     if codex and (claude or os.environ.get("CLAUDECODE")):
         raise Error("Conflicting inherited agent identities; use a clean worker or resume the intended conversation")
+    for value in (codex, claude):
+        if value is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", value):
+            raise Error("Invalid native agent identity")
+    reason_kind = os.environ.get("REASON_NETWORK_AGENT")
+    reason_id = os.environ.get("REASON_NETWORK_SESSION")
+    if reason_kind is not None or reason_id is not None:
+        if not reason_kind or not reason_id:
+            raise Error("Incomplete native agent identity")
+        expected = ("codex", codex) if codex else ("claude-code", claude)
+        if (reason_kind, reason_id) != expected:
+            raise Error("Conflicting inherited agent identities")
+    if os.environ.get("CODEX_SESSION_ID") and os.environ["CODEX_SESSION_ID"] != codex:
+        raise Error("Conflicting inherited agent identities")
     if codex:
         return "codex", codex
     if claude:
         return "claude-code", claude
+    hints = (key for key in IDENTITY_VARS if key != "REX_AGENTS_LAUNCH")
+    if any(key in os.environ for key in hints):
+        raise Error("Incomplete native agent identity")
+    if allow_human:
+        return None
     raise Error("No native agent identity. Use an agent shell or a human Rex action.")
 
 
@@ -113,6 +139,17 @@ class Integration:
         if server or self.server:
             argv += ["-S", server or self.server]
         return run(argv + list(args), timeout=timeout)
+
+    def local_server(self):
+        # Resolve the default Unix endpoint without a CLI or inherited server override.
+        env = dict(os.environ)
+        env.pop("REX_SERVER", None)
+        data = decode(run([os.environ.get("REX_AGENTS_REX", "rex"), "--autostart=false",
+                           "--timeout", "10s", "whoami", "--json"], env=env))
+        endpoint = data.get("endpoint") if isinstance(data, dict) else None
+        if not isinstance(endpoint, str) or not endpoint.startswith("unix:") or len(endpoint) <= 5:
+            raise Error("Local Rex server unknown")
+        return endpoint
 
     def reason(self, *args, identity=None, human=False, stdin=None):
         engine = os.environ.get("REX_AGENTS_REASON") or str(Path.home()/".reason/bin/reason-network")
@@ -215,6 +252,53 @@ class Integration:
         state = decode(self.rex("block", "call", *scope, "process", server=server or location["server"]))
         if not state.get("child") or state.get("last_exit") is not None:
             raise Error("Mapped pane's process has ended")
+
+    @staticmethod
+    def valid_location(location):
+        return (isinstance(location, dict)
+                and all(isinstance(location.get(key), str) and location[key].strip()
+                        for key in ("server", "session", "block"))
+                and re.fullmatch(r"session:[A-Za-z0-9][A-Za-z0-9_-]*", location["session"]) is not None
+                and re.fullmatch(r"block:[A-Za-z0-9][A-Za-z0-9_-]*", location["block"]) is not None)
+
+    def pane_blocks(self, location):
+        data = decode(self.rex("block", "ls", "-s", location["session"], "--json", server=location["server"]))
+        if (not isinstance(data, dict) or not isinstance(data.get("blocks"), list)
+                or any(not isinstance(row, dict) or not isinstance(row.get("block_id"), str)
+                       or not re.fullmatch(r"block:[A-Za-z0-9][A-Za-z0-9_-]*", row["block_id"])
+                       for row in data["blocks"])):
+            raise Error("Incompatible Rex block listing")
+        if len({row["block_id"] for row in data["blocks"]}) != len(data["blocks"]):
+            raise Error("Incompatible Rex block listing: duplicate block IDs")
+        return data["blocks"]
+
+    def pane_state(self, location):
+        """Only an exact listing or an absent session proves a pane is gone."""
+        if not self.valid_location(location):
+            return "unknown"
+        try:
+            blocks = self.pane_blocks(location)
+            if not any(row["block_id"] == location["block"] for row in blocks):
+                return "gone"
+            state = decode(self.rex("block", "call", "-s", location["session"],
+                                    "-b", location["block"], "process", server=location["server"]))
+            if not isinstance(state, dict) or "child" not in state or "last_exit" not in state:
+                return "unknown"
+            if ((state["child"] is not None and not isinstance(state["child"], dict))
+                    or (state["last_exit"] is not None and not isinstance(state["last_exit"], dict))):
+                return "unknown"
+            if state["child"] is not None and (type(state["child"].get("pid")) is not int
+                                                or state["child"]["pid"] <= 0):
+                return "unknown"
+            if state["child"] is None or state["last_exit"] is not None:
+                return "exited"
+            return "live"
+        except CommandError as exc:
+            if re.search(r'session target "[^"\n]+" not found', str(exc)):
+                return "gone"
+        except Error:
+            pass
+        return "unknown"
 
     def registry(self):
         mappings, warnings = [], []
@@ -332,7 +416,22 @@ class Integration:
             fcntl.flock(stream, fcntl.LOCK_EX)
             yield
 
-    def launch(self, kind, name, cwd, task=None, host=None):
+    def launch(self, kind, name, cwd, task=None, host=None, model=None, effort=None):
+        sender = native_identity(allow_human=True)
+        owner = ":".join(sender) if sender else None
+        own = read(self.locator_path(*sender), {}) if sender else {}
+        # An inherited token is not proof that this native conversation is a worker.
+        if sender and own.get("kind") == sender[0] and own.get("native_id") == sender[1]:
+            token = own.get("launch")
+            parent = read(self.cache/"launches"/f"{token}.json", {}) if token else {}
+            if parent.get("owner"):
+                raise Error("Owned workers cannot launch nested workers")
+        for label, value in (("model", model), ("effort", effort)):
+            if value is not None and (not isinstance(value, str) or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}(?:\[[A-Za-z0-9_-]+\])?", value)):
+                raise Error(f"Invalid {label}: expected a model or effort identifier")
+        if host and (model is not None or effort is not None):
+            raise Error("Remote model and effort selection is not supported yet")
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         if host:
@@ -349,19 +448,16 @@ class Integration:
         if not shutil.which(kind):
             raise Error(f"Missing executable: {kind}")
         if not self.session or not self.block:
-            try:
-                kind_id, native_id = native_identity()
-            except Error:
-                if any(os.environ.get(key) for key in ("CODEX_THREAD_ID", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "REX_AGENTS_NATIVE_ID")):
-                    raise
-            else:
-                own = read(self.locator_path(kind_id, native_id), {})
-                if not own or own.get("ended"):
+            if sender:
+                if not own or own.get("ended") or not self.valid_location(own.get("location")):
                     raise Error("No live Rex locator for this agent; pass --session and --block explicitly")
                 location = own["location"]
                 self.server = self.server or location["server"]
                 self.session = self.session or location["session"]
                 self.block = self.block or location["block"]
+        local_server = self.local_server() if model is not None or effort is not None else None
+        if local_server and self.server and self.server != local_server:
+            raise Error("Remote model and effort selection is not supported yet")
         if not self.session:
             sessions = decode(self.rex("ls", "--json"))
             sessions = sessions.get("sessions", []) if isinstance(sessions, dict) else sessions
@@ -374,39 +470,55 @@ class Integration:
             if not window or not window.get("focused_block_id"):
                 raise Error("Set --block to the pane beside which the worker should start")
             self.block = window["focused_block_id"]
-        server = self.server or decode(self.rex("whoami", "--json"))["endpoint"]
+        server = self.server or local_server or decode(self.rex("whoami", "--json"))["endpoint"]
         with self.launch_lock():
             if any(r["name"] == name and r["status"] != "offline" for r in self.roster()["sessions"]):
                 raise Error(f"Active worker name already exists: {name}")
-            for path in (self.cache/"launches").glob("*.json"):
-                old = read(path)
-                if old["name"] != name or old.get("failed"):
+            records = [read(path) for path in (self.cache/"launches").glob("*.json")]
+            for old in records:
+                if old["name"] != name or (old.get("failed") and not old.get("location")):
                     continue
                 if old.get("location"):
-                    try:
-                        self.live_location(old["location"])
-                    except Error:
-                        # An unreachable host is not proof that its worker exited.
-                        try:
-                            blocks = decode(self.rex("block", "ls", "-s", old["location"]["session"], "--json", server=old["location"]["server"]))
-                        except CommandError as exc:
-                            # Rex distinguishes an absent session from an inaccessible server.
-                            if re.search(r'session target "[^"\n]+" not found', str(exc)):
-                                continue
-                            raise
-                        if old["location"]["block"] in json.dumps(blocks):
-                            raise Error(f"Worker {name} has a pane; inspect or close it before retrying")
+                    state = self.pane_state(old["location"])
+                    if state == "gone":
                         continue
                 raise Error(f"Worker {name} already launched or creation is uncertain; inspect Rex before retrying")
+            owned = sorted((r for r in records if owner and r.get("owner") == owner
+                            and not r.get("failed") and self.valid_location(r.get("location"))
+                            and r.get("split") in ("right", "below")),
+                           key=lambda r: (r.get("created", 0), r.get("token", "")), reverse=True)
+            direction = "below" if owned and owned[0]["split"] == "right" else "right"
+            anchor = self.block
+            location = dict(server=server, session=self.session, block=self.block)
+            try:
+                blocks = self.pane_blocks(location)
+            except Error:
+                blocks = []
+            window = next((b.get("window_id") for b in blocks if b["block_id"] == self.block), None)
+            # Stay in the driver's tab; a moved worker must not redirect later splits.
+            if window:
+                same_window = {b["block_id"] for b in blocks if b.get("window_id") == window}
+                for previous in owned:
+                    target = previous["location"]
+                    if (target["server"] == server and target["session"] == self.session
+                            and target["block"] in same_window and self.pane_state(target) == "live"):
+                        anchor = target["block"]
+                        break
             token = str(uuid.uuid4())
             path = self.cache/"launches"/f"{token}.json"
-            record = dict(token=token, name=name, kind=kind, created=time.time(), has_task=task is not None)
+            record = dict(token=token, name=name, kind=kind, created=time.time(), has_task=task is not None,
+                          owner=owner, split=direction)
             atomic(path, record)
-            payload = base64.urlsafe_b64encode(json.dumps(dict(kind=kind, name=name, task=task, token=token)).encode()).decode()
+            payload = base64.urlsafe_b64encode(json.dumps(dict(kind=kind, name=name, task=task, token=token,
+                                                             model=model, effort=effort)).encode()).decode()
             try:
-                result = decode(self.rex("split", "-s", self.session, "-b", self.block, "--split=right", "-c", str(directory),
+                result = decode(self.rex("split", "-s", self.session, "-b", anchor, f"--split={direction}", "-c", str(directory),
                                          "--label", f"rex-agents:{token}", "--focus=false", "--json",
                                          "--", str(CLI), "_worker", payload))
+                if (not isinstance(result, dict) or not isinstance(result.get("block_ids"), list)
+                        or not result["block_ids"] or not isinstance(result["block_ids"][0], str)
+                        or not result["block_ids"][0].startswith("block:")):
+                    raise Error("Incompatible Rex split result")
             except Error as exc:
                 # Transport failures can occur after the server created the pane.
                 definite = isinstance(exc, CommandError) and any(
@@ -422,6 +534,70 @@ class Integration:
             atomic(path, record)
             return dict(result, name=name, registration="pending", launch=token)
 
+    def cleanup(self):
+        sender = native_identity()
+        owner = ":".join(sender)
+        own = read(self.locator_path(*sender), {})
+        own_location = own.get("location")
+        result = dict(closed=[], gone=[], uncertain=[])
+        with self.launch_lock():
+            owned = [(path, record) for path in sorted((self.cache/"launches").glob("*.json"))
+                     if (record := read(path)).get("owner") == owner]
+            if not owned:
+                return result
+            try:
+                server = self.local_server()
+            except Error:
+                server = None
+            current = dict(server=server, session=self.session, block=self.block)
+            for path, record in owned:
+                location = record.get("location")
+                if server and self.valid_location(location) and location["server"] != server:
+                    continue
+                item = dict(name=record.get("name"), launch=path.stem, location=location)
+                if not server:
+                    result["uncertain"].append(dict(item, error="Local Rex server unknown"))
+                    continue
+                if not self.valid_location(location):
+                    result["uncertain"].append(dict(item, error="Missing or invalid pane location"))
+                    continue
+                if location == current or location == own_location:
+                    result["uncertain"].append(dict(item, error="Refusing to close the driver's own pane"))
+                    continue
+                locators = self.locators()
+                active = [locator for locator in locators if not locator.get("ended")]
+                if any(locator.get("location") == location and locator.get("launch") != path.stem
+                       for locator in active):
+                    result["uncertain"].append(dict(item, error="Pane belongs to another native conversation"))
+                    continue
+                if any(locator.get("launch") == path.stem and locator.get("location") != location
+                       for locator in active):
+                    result["uncertain"].append(dict(item, error="Worker native conversation moved to another pane"))
+                    continue
+                state = self.pane_state(location)
+                if state == "unknown":
+                    result["uncertain"].append(dict(item, error="Pane state unknown"))
+                    continue
+                outcome = "gone"
+                if state in ("live", "exited"):
+                    error = "Pane absence could not be confirmed after close"
+                    try:
+                        self.rex("block", "close", "-s", location["session"], location["block"],
+                                 server=location["server"])
+                    except Error as exc:
+                        error = str(exc)
+                    if self.pane_state(location) != "gone":
+                        result["uncertain"].append(dict(item, error=error))
+                        continue
+                    outcome = "closed"
+                for locator in self.locators():
+                    if locator.get("launch") == path.stem and locator.get("location") == location:
+                        locator["ended"] = True
+                        atomic(self.locator_path(locator["kind"], locator["native_id"]), locator)
+                path.unlink()
+                result[outcome].append(item)
+        return result
+
     def worker(self, payload):
         value = decode(base64.urlsafe_b64decode(payload).decode())
         path = self.cache/"launches"/f"{value['token']}.json"
@@ -436,6 +612,11 @@ class Integration:
         else:
             # The shared app server does not carry the launching terminal environment into hooks.
             argv += ["--no-daemon"]
+        if value.get("model") is not None:
+            argv += ["--model" if value["kind"] == "claude" else "-m", value["model"]]
+        if value.get("effort") is not None:
+            argv += (["--effort", value["effort"]] if value["kind"] == "claude" else
+                     ["-c", "model_reasoning_effort=" + json.dumps(value["effort"])])
         if value.get("task") is not None:
             argv += ["--", value["task"]]
         try:

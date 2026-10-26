@@ -121,7 +121,8 @@ def action(app, value, prompt=False):
         if kind not in ("claude", "codex"):
             raise Error("Agent must be claude or codex")
         return app.launch(kind, field("name", "Worker name: "), field("cwd", "Working directory: "),
-                          args.get("task"), args.get("host"))
+                          args.get("task"), args.get("host"),
+                          **{key: args[key] for key in ("model", "effort") if key in args})
     raise Error(f"Unknown action: {operation}")
 
 
@@ -143,6 +144,9 @@ def parser():
     launch.add_argument("--cwd", required=True)
     launch.add_argument("--task-file")
     launch.add_argument("--host")
+    launch.add_argument("--model", help="Native worker model; omitted values inherit (local only)")
+    launch.add_argument("--effort", help="Native worker effort; omitted values inherit (local only)")
+    commands.add_parser("cleanup", help="Close local workers owned by this native driver, including unfinished work")
     commands.add_parser("focus").add_argument("target")
     commands.add_parser("navigation").add_argument("mode", nargs="?", default="status", choices=("on", "off", "status"))
     commands.add_parser("doctor")
@@ -173,7 +177,12 @@ def main(argv=None):
             print(app.send(args.target, text, fyi=args.fyi, reply_to=args.reply_to), end="")
         elif args.command == "launch":
             task = Path(args.task_file).read_text() if args.task_file else None
-            result = app.launch(args.kind, args.name, args.cwd, task, args.host)
+            result = app.launch(args.kind, args.name, args.cwd, task, args.host,
+                                model=args.model, effort=args.effort)
+        elif args.command == "cleanup":
+            result = app.cleanup()
+            print(json.dumps(result, indent=2))
+            return int(bool(result["uncertain"]))
         elif args.command == "navigation":
             result = navigation(args.mode)
         elif args.command == "focus":

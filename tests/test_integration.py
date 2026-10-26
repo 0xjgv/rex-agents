@@ -25,6 +25,7 @@ class Fake(Integration):
         self.host_rows = []
         self.calls = []
         self.launch_error = False
+        self.blocks = {"block:parent": "window:parent"}
 
     def reason(self, *args, identity=None, human=False, stdin=None):
         self.calls.append((args, identity, human))
@@ -55,10 +56,14 @@ class Fake(Integration):
                 raise Error("pane missing")
             return json.dumps({"child": {"pid": 100}, "last_exit": None})
         if args[:2] == ("block", "ls"):
-            return json.dumps({"blocks": []})
+            return json.dumps({"blocks": [{"block_id": block, "window_id": window}
+                                          for block, window in self.blocks.items()
+                                          if block not in self.closed]})
         if args[0] == "split":
             if self.launch_error:
                 raise Error("timeout")
+            self.blocks["block:new"] = "window:parent"
+            self.closed.discard("block:new")
             return json.dumps({"block_ids": ["block:new"], "window_id": "window:new"})
         if args[:2] == ("client", "ls"):
             return json.dumps({"clients": [{"client_id": "client:app", "info": {"kind": "app"}}]})
@@ -347,7 +352,7 @@ class IntegrationTests(unittest.TestCase):
             self.app.launch("codex", "worker", self.tmp.name)
             with patch.object(self.app, "live_location", side_effect=Error("host unreachable")):
                 with patch.object(self.app, "rex", side_effect=Error("host unreachable")):
-                    with self.assertRaisesRegex(Error, "host unreachable"):
+                    with self.assertRaisesRegex(Error, "creation is uncertain"):
                         self.app.launch("codex", "worker", self.tmp.name)
         self.assertEqual(sum(c[0][0] == "split" for c in self.app.calls), 1)
 
