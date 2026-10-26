@@ -5,7 +5,7 @@ Connect interactive Claude Code and Codex conversations through Rex and Reason. 
 **Start with [ONBOARDING.md](ONBOARDING.md)** for the workflow, installation, identity model, troubleshooting, and removal.
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3.13 -m unittest discover -s tests -v
 ./bin/rex-agents install
 rex config check
 rex config reload
@@ -35,7 +35,7 @@ Navigation defaults off. Rex Remote Control stays disabled on this machine. `rex
 
 The command palette provides List Agents, Message Agent, Launch Agent, Focus Agent, and Toggle Agent Navigation. Human actions send as Reason's terminal identity; agent CLI sends require verified native identity. There are no default key bindings.
 
-CLI and skill links point into this checkout. These changes need no install or new dependencies; Lua actions and hooks remain unchanged.
+CLI and skill links point into this checkout. After hook definitions change, rerun `rex-agents install` and re-trust Codex hooks through `/hooks`.
 
 See [VERIFICATION.md](VERIFICATION.md) for measured results and limitations. Remote behavior has fixture coverage; live cross-machine validation awaits another enrolled machine.
 

@@ -101,6 +101,8 @@ Normal messages may wake an idle recipient. `--fyi` requests no wake and waits f
 
 Reason's native hooks and MCP handle incoming messages. This integration never reads or acknowledges another agent's inbox. Do not build a second polling loop around it.
 
+Worker panes open unfocused, so their prompts can go unseen. Workers send questions to their driver through Reason; the driver asks you. When a launched worker opens AskUserQuestion (Claude) or a permission prompt (Claude and Codex), a hook pops up a Reason notification, and an owned worker also tells its driver with `--fyi`. Answer in the worker pane. Codex model questions (`request_user_input`, Plan mode only) have no hook and get no pop-up.
+
 ## Rex actions
 
 Search Rex's command palette for these actions:
@@ -147,7 +149,7 @@ Codex workers use its supported `--no-daemon` option. In the tested version, the
 
 ## Install on another machine
 
-Copy or check out this project on the machine. It needs Python 3.9 or newer, Rex, the Reason engine, and whichever agent CLIs you use. No Python packages are required.
+Copy or check out this project on the machine. It needs Python 3.13 or newer (as `python3`, or `python3.13` on `PATH`), Rex, the Reason engine, and whichever agent CLIs you use. No Python packages are required.
 
 1. Enable Claude Code and Codex through Reason's supported setup. With the engine installed, run `~/.reason/bin/reason-network setup` and select those agents. If absent, `reason network setup` bootstraps it; inspect its report because the wrapper can configure other detected agents during bootstrap.
 2. Run `./bin/rex-agents install`, then `rex config check` and `rex config reload`.
@@ -164,7 +166,7 @@ rex-agents launch codex --name remote-reviewer \
 
 The task is sent through Rex; the directory is interpreted on the remote machine. The remote installation uses its own agent settings. Remote launch rejects `--model` and `--effort`; remote cleanup is unsupported. Manage remote worker panes manually. With several remote sessions, invoke Launch Agent in the intended session. Discovery asks each configured host for its local registry through the existing authenticated Rex connection. There is no new network listener.
 
-CLI and skill files are symlinks into this checkout. The lifecycle changes need no new dependencies or installation steps on this existing setup. Lua and hook definitions remain unchanged.
+CLI and skill files are symlinks into this checkout. After hook definitions change, rerun `rex-agents install` and re-trust Codex hooks through `/hooks`.
 
 ## Troubleshooting
 
@@ -190,4 +192,4 @@ rex config reload
 
 Removal deletes only this project's hooks, CLI and skill links, Lua module, managed `require` entry, navigation preference, and cache. Existing Reason integrations, active conversations, unrelated configuration, and backups remain intact. Already loaded locator hooks become inert after uninstall.
 
-Source lives in `rex_agents/core.py` (identity, messaging, launch, focus), `rex_agents/install.py` (installation and navigation preference), `rex_agents/cli.py` (commands and diagnostics), `lua/rex_agents.lua` (Rex actions), and `skill/SKILL.md` (agent instructions). Run `python3 -m unittest discover -s tests -v` for regression tests. See `VERIFICATION.md` for measured results and remaining limits.
+Source lives in `rex_agents/core.py` (identity, messaging, launch, focus), `rex_agents/install.py` (installation and navigation preference), `rex_agents/cli.py` (commands and diagnostics), `lua/rex_agents.lua` (Rex actions), and `skill/SKILL.md` (agent instructions). Run `python3.13 -m unittest discover -s tests -v` for regression tests. See `VERIFICATION.md` for measured results and remaining limits.

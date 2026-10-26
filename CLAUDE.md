@@ -2,13 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Rex agents connects interactive Claude Code and Codex conversations to their exact Rex panes and messages them through Reason. Python 3.9+ standard library only; no packages, build, or linter. `bin/rex-agents` is a shim that puts the repo root on `sys.path`. User-facing docs: `ONBOARDING.md` (workflow, identity model, troubleshooting), `VERIFICATION.md` (live results and open limits), `skill/SKILL.md` (instructions installed for agents).
+Rex agents connects interactive Claude Code and Codex conversations to their exact Rex panes and messages them through Reason. Python 3.13+ standard library only; no packages, build, or linter. `bin/rex-agents` is a shim that re-execs into `python3.13` when started by an older `python3`, then puts the repo root on `sys.path`. User-facing docs: `ONBOARDING.md` (workflow, identity model, troubleshooting), `VERIFICATION.md` (live results and open limits), `skill/SKILL.md` (instructions installed for agents).
 
 ## Commands
 
 ```sh
-python3 -m unittest discover -s tests -v                                       # full suite
-python3 -m unittest tests.test_integration.IntegrationTests.test_ambiguous_target  # one test
+python3.13 -m unittest discover -s tests -v                                    # full suite
+python3.13 -m unittest tests.test_integration.IntegrationTests.test_ambiguous_target  # one test
 ./bin/rex-agents --help
 ```
 
@@ -23,7 +23,7 @@ rex-agents doctor   # JSON checks; exits 1 if any check fails
 
 Four entry paths converge on `Integration` in `rex_agents/core.py`:
 
-- **Agent hooks.** `install.py` registers `bin/rex-agents _hook KIND EVENT` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd` in Claude and Codex. `Integration.hook` writes a locator `~/.cache/rex-agents/sessions/<sha256("kind:native_id")>.json` mapping the native conversation ID to Rex `server/session/block`. `SessionStart` records without touching the network; later events call `resolve()`, which checks Reason `is_me` and is the only code that renames a conversation (`reason status --name`, once, for launched workers). Nested agents and subagents that inherit a parent's Rex env are ignored so they cannot take its pane.
+- **Agent hooks.** `install.py` registers `bin/rex-agents _hook KIND EVENT` for `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `SessionEnd` in Claude and Codex, plus `PermissionRequest` in both and `PreToolUse` matching `AskUserQuestion` in Claude. `Integration.hook` writes a locator `~/.cache/rex-agents/sessions/<sha256("kind:native_id")>.json` mapping the native conversation ID to Rex `server/session/block`. `SessionStart` records without touching the network; later events call `resolve()`, which checks Reason `is_me` and is the only code that renames a conversation (`reason status --name`, once, for launched workers). Nested agents and subagents that inherit a parent's Rex env are ignored so they cannot take its pane. On the two blocking-prompt events, `alert()` makes a launched worker send Reason `--notify` to its human (owned workers: to the driver with `--fyi --notify`). The prompt still waits in the pane; Codex `request_user_input` has no hook.
 - **CLI.** `cli.py` parses commands and dispatches. `list`, `send`, `launch`, `cleanup`, `focus`, `navigation`, `doctor`, `install`, `uninstall` are public; `_hook`, `_registry`, `_worker`, `_action`, `_prompt` are internal entry points for hooks, Rex actions, and worker panes. `cleanup` prints JSON with `closed`, `gone`, and `uncertain`, exiting 1 if uncertainty remains, otherwise 0. Native identity errors also exit 1. Python `_action` forwards supplied model and effort arguments; the fixed Lua schema stays unchanged, with no cleanup palette action.
 - **Rex actions.** `lua/rex_agents.lua` defines seven actions: five user-facing palette actions, plus `rex_agents_registry` and `rex_agents_remote_launch`, which other hosts call via `rex do`. User-facing actions with complete args run `rex-agents _action` (JSON on stdin) under a 24 s limit. List Agents, and any action missing args, opens a background split running `rex-agents _prompt PAYLOAD`, so output and interactive input escape the action time limit. Both reach `cli.action()`.
 - **Launch.** `Integration.launch` takes `launch.lock`, rejects duplicate names (Reason roster plus `~/.cache/rex-agents/launches/<token>.json` reservations), then runs `rex split --focus=false` with `rex-agents _worker PAYLOAD`. `_worker` records the pane and `execvpe`s `claude --name NAME` or `codex --no-daemon` with `REX_AGENTS_LAUNCH=<token>`, which the worker's hooks use to link locator and reservation. Codex needs `--no-daemon` because its shared app server drops the Rex env before hooks run.
@@ -43,7 +43,7 @@ Identity plumbing: `IDENTITY_VARS`, `clean_env()`, and `identity_env()` control 
 ## Install mechanics
 
 - CLI and skill are **symlinks** into the repo, so Python edits take effect immediately.
-- The lifecycle commands require no new dependencies or installation steps. Lua and hook definitions remain unchanged.
+- Hook definitions include the blocking-prompt events. After changing `EVENTS` or `BLOCKING`, reinstall and re-trust Codex hooks; `doctor` reports missing events.
 - The Lua module is a **copy** with `@CLI@`, `@REX@`, `@PATH@` substituted at install time. After editing `lua/rex_agents.lua`, reinstall and run `rex config check` and `rex config reload`.
 - Hook commands embed the absolute `bin/rex-agents` path. Moving the repo breaks them. Changing hook definitions invalidates Codex hook trust; the user must re-trust via `/hooks`.
 - Install edits only its own hook entries, links, module, and `require` marker line, and takes a one-time backup. Uninstall removes those and the cache. `_hook` does nothing when not installed.

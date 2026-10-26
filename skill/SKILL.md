@@ -36,6 +36,8 @@ Navigation is off by default. Change `rex-agents navigation on|off` only when th
 
 The Rex command palette has List Agents, Message Agent, Focus Agent, Launch Agent, and Toggle Agent Navigation. Human actions send as Reason's terminal identity. No default keyboard bindings are installed.
 
-CLI and skill links point into this checkout. These lifecycle changes require no new install steps or dependencies. Lua action arguments and hooks remain unchanged.
+Launched workers run in unfocused panes, so a prompt there can go unseen. A driver that launches a worker puts its own Reason address (from `rex-agents list --json`, the `is_me` row) in the task. A worker that needs a human decision sends the question to that address instead of opening AskUserQuestion or `request_user_input`, then waits for the reply. The driver asks its human and replies with `--reply-to`; it never answers for the human. As a backstop, hooks pop up a Reason notification when a launched worker opens AskUserQuestion (Claude) or a permission prompt (Claude and Codex), and tell the owning driver with `--fyi`. The prompt still waits in the worker pane.
+
+CLI and skill links point into this checkout. After hook definitions change, run `rex-agents install` and re-trust Codex hooks through `/hooks`.
 
 `rex-agents install` adds only this project's CLI, skill, hooks, and Lua actions. Run `rex config check` and `rex config reload` afterward. Ordinary commands never install Reason or change its configuration. `rex-agents uninstall` removes this project's additions and cache, leaving Reason and active sessions intact.

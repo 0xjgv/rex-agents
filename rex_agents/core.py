@@ -228,7 +228,9 @@ class Integration:
         # Recording identity never waits for network registration at startup.
         if event != "SessionStart":
             try:
-                self.resolve(record)
+                row = self.resolve(record)
+                if event in ("PreToolUse", "PermissionRequest"):
+                    self.alert(record, row, payload)
             except Error:
                 pass
 
@@ -246,6 +248,29 @@ class Integration:
             atomic(path, latest)
             row = self.me(record["kind"], record["native_id"])
         return row
+
+    def alert(self, record, row, payload):
+        """Pop up a launched worker's blocking prompt; its unfocused pane may go unseen."""
+        token = record.get("launch")
+        launch = read(self.cache/"launches"/f"{token}.json", {}) if token else {}
+        if not launch:
+            return
+        def dicts(value):
+            return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        tool = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        if payload.get("tool_name") == "AskUserQuestion":
+            detail = "; ".join(f"{q.get('question')} [{', '.join(str(o.get('label')) for o in dicts(q.get('options')))}]"
+                               for q in dicts(tool.get("questions")))
+        else:
+            detail = f"approve {payload.get('tool_name')}: " + str(tool.get("description") or tool.get("command") or tool)[:300]
+        if launch.get("owner"):
+            kind, native_id = launch["owner"].split(":", 1)
+            args = ["send", self.me(kind, native_id)["address"], "--fyi", "--notify"]
+        else:
+            args = ["send", row["person"], "--notify"]
+        sender = (record["kind"], record["native_id"])
+        self.reason(*args, "--from", ":".join(sender), identity=sender,
+                    stdin=f"{launch['name']} is waiting in its Rex pane: {detail}")
 
     def live_location(self, location, server=None):
         scope = ["-s", location["session"], "-b", location["block"]]

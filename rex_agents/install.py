@@ -10,6 +10,13 @@ from .core import CLI, ROOT, Error, atomic, read
 
 MARKER = 'require("rex_agents") -- rex-agents managed\n'
 EVENTS = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "SessionEnd")
+# Prompts that block a launched worker; Codex has no hook for its model's questions.
+BLOCKING = {"claude-code": {"PreToolUse": "AskUserQuestion", "PermissionRequest": None},
+            "codex": {"PermissionRequest": None}}
+
+
+def events(kind):
+    return {**dict.fromkeys(EVENTS), **BLOCKING[kind]}
 
 
 def paths(home):
@@ -25,7 +32,7 @@ def hook_command(kind, event):
 
 def edit_hooks(document, kind, remove=False):
     hooks = document.setdefault("hooks", {})
-    for event in EVENTS:
+    for event, matcher in events(kind).items():
         command = hook_command(kind, event)
         groups = []
         for group in hooks.get(event, []):
@@ -33,7 +40,8 @@ def edit_hooks(document, kind, remove=False):
             if kept:
                 groups.append(dict(group, hooks=kept))
         if not remove:
-            groups.append({"hooks": [{"type": "command", "command": command, "timeout": 3 if event == "SessionEnd" else 15}]})
+            group = {"hooks": [{"type": "command", "command": command, "timeout": 3 if event == "SessionEnd" else 15}]}
+            groups.append({"matcher": matcher, **group} if matcher else group)
         if groups:
             hooks[event] = groups
         else:

@@ -221,6 +221,43 @@ class IntegrationTests(unittest.TestCase):
             self.app.send("two", "hello")
         self.assertFalse(self.app.sent)
 
+    def blocked(self, owner="codex:id-one", kind="codex", event="PermissionRequest", **payload):
+        atomic(self.app.cache/"launches"/"tok.json", dict(token="tok", name="two", owner=owner))
+        os.environ["REX_AGENTS_LAUNCH"] = "tok"
+        self.app.block = "block:two"
+        self.app.hook(kind, event, dict(session_id="id-two", **payload))
+        return [(args, stdin, identity) for args, stdin, identity, human in self.app.sent]
+
+    def test_owned_worker_permission_prompt_notifies_driver(self):
+        sent = self.blocked(tool_name="Bash", tool_input={"command": "rm x"})
+        self.assertEqual(sent, [(("send", "juan/one", "--fyi", "--notify", "--from", "codex:id-two"),
+                                 "two is waiting in its Rex pane: approve Bash: rm x", ("codex", "id-two"))])
+
+    def test_owned_claude_worker_question_lists_options(self):
+        self.app.rows[1]["agent"] = "claude-code"
+        sent = self.blocked(kind="claude-code", event="PreToolUse", tool_name="AskUserQuestion",
+                            tool_input={"questions": [{"question": "Which DB?", "options": [{"label": "Postgres"}, {"label": "SQLite"}]}]})
+        self.assertEqual(sent[0][1], "two is waiting in its Rex pane: Which DB? [Postgres, SQLite]")
+
+    def test_malformed_question_payload_still_alerts(self):
+        for questions in ("abc", None, ["x"], [{"question": "Q", "options": None}], [{"question": "Q", "options": ["a"]}]):
+            self.app.sent.clear()
+            with self.subTest(questions=questions):
+                sent = self.blocked(tool_name="AskUserQuestion", tool_input={"questions": questions})
+                self.assertEqual(len(sent), 1)
+
+    def test_human_launched_worker_prompt_notifies_its_person(self):
+        sent = self.blocked(owner=None, tool_name="Bash", tool_input={})
+        self.assertEqual(sent[0][0], ("send", "juan", "--notify", "--from", "codex:id-two"))
+
+    def test_blocking_prompt_alerts_only_launched_workers(self):
+        self.hook(event="PermissionRequest")
+        self.assertEqual(self.app.sent, [])
+
+    def test_unresolvable_driver_does_not_break_worker_hook(self):
+        self.app.rows[0]["status"] = "offline"
+        self.assertEqual(self.blocked(tool_name="Bash"), [])
+
     def test_claude_hook_identity_supersedes_stale_clear_environment(self):
         os.environ.update(CLAUDE_CODE_SESSION_ID="old", REX_AGENTS_KIND="claude-code", REX_AGENTS_NATIVE_ID="new")
         self.assertEqual(native_identity(), ("claude-code", "new"))
@@ -460,6 +497,13 @@ class InstallTests(unittest.TestCase):
         data["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "other"})
         clean = edit_hooks(data, "codex", True)
         self.assertEqual(clean["hooks"]["Stop"][0]["hooks"], [{"type": "command", "command": "other"}])
+
+    def test_blocking_prompt_hooks_match_each_harness(self):
+        claude, codex = edit_hooks({}, "claude-code")["hooks"], edit_hooks({}, "codex")["hooks"]
+        self.assertEqual(claude["PreToolUse"][0]["matcher"], "AskUserQuestion")
+        self.assertNotIn("matcher", claude["PermissionRequest"][0])
+        self.assertIn("PermissionRequest", codex)
+        self.assertNotIn("PreToolUse", codex)
 
     def test_conflicting_cli_aborts_before_hook_edits(self):
         atomic(self.home/".local/bin/rex-agents", "unrelated")

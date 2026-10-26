@@ -36,6 +36,8 @@ Codex's shared app server did not preserve Rex environment variables for the int
 
 No remote Rex hosts are configured. Remote routing, unavailable-host behavior, and local-app versus remote-pane selection have controlled fixture coverage. Live cross-machine messaging and navigation remain deferred until another machine is enrolled.
 
+Blocking-prompt alerts (`PreToolUse` for AskUserQuestion, `PermissionRequest`) have fixture coverage only. Combining `--fyi` with `--notify` on one send, and the pop-up's effect on focus, are unverified live.
+
 Local raw evidence is under `.verification/`, excluded from version control. The named verification conversations and pane IDs are historical observations; closed panes are not treated as live navigation targets.
 
 ## Model selection, alternating panes, and cleanup

@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 from .core import Error, Integration, decode, run
-from .install import EVENTS, hook_command, install, installed, navigation, paths
+from .install import events, hook_command, install, installed, navigation, paths
 
 
 def display(data):
@@ -44,7 +44,7 @@ def doctor(app):
             raise Error("Integration is not installed")
         for kind, path in paths(Path.home()).items():
             document = decode(path.read_text())
-            for event in EVENTS:
+            for event in events(kind):
                 commands = [hook.get("command") for group in document.get("hooks", {}).get(event, [])
                             for hook in group.get("hooks", [])]
                 if hook_command(kind, event) not in commands:
