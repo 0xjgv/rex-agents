@@ -12,7 +12,7 @@ Find agents with `reason-network who` or MCP `list_team`. Message them with MCP 
 
 ## Choose model and effort
 
-Ask the driver to work with a model by name: sol, terra, astra (Codex) or opus, fable, sonnet (Claude Code). The skill maps each name to its model ID. The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. The driver uses the model and effort you name, and chooses them itself when you don't. Every worker runs in a pane, even on the driver's own harness.
+Ask the driver to work with a model by name: sol, terra, astra, luna (Codex) or opus, fable, sonnet, haiku (Claude Code). The skill maps each name to its model ID. The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. The driver uses the model and effort you name. When you leave one open and `EFFORT_ROUTER_DIR` points at effort-router, the driver routes the task through it for its own harness and tells you the pick; otherwise it chooses itself. Every worker runs in a pane, even on the driver's own harness.
 
 ## Launch a worker
 

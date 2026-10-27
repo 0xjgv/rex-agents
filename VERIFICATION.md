@@ -139,3 +139,12 @@ Workers now open in a Rex session of their own, and the driver's pane never spli
 Fixture-only: workers join an existing owned pane's session; human launches use the same placement; cleanup leaves alone sessions that still hold other panes, and sessions that held none of the caller's panes. A workers session that empties because its workers exited on their own stays until the user closes it. No Codex worker ran through these API calls.
 
 The suite has 37 tests.
+
+## Routed model and effort (2026-10-27)
+
+When the user leaves the model or effort open and `EFFORT_ROUTER_DIR` is set, the skill routes the task file through effort-router's `route.py --target <harness> --json -- "$(cat task)"`. The router now scores four tiers (judgment, hard, routine, trivial) and four efforts, the same eight definitions for every target, and maps the tier through a per-harness table. The skill table gained `haiku` and `luna`. rex-agents code is unchanged.
+
+- Live run from a Claude driver pane: a synthetic two-line task file whose lines start with `- ` scored through Respan in about 1 second for each target. `--target claude` returned `{"model": "sonnet", "effort": "medium", "tier": "routine"}`; `--target codex` returned `gpt-6.1-terra`, `medium`, `routine`. The `--` kept the leading `-` from being read as an option.
+- Mapping `sonnet` to `claude-sonnet-5-5` and launching with `--effort medium` gave a pane showing `Sonnet 5.5 with medium effort`. `cleanup` closed it, exited 0, and killed its workers session.
+
+Not verified live: a driver following the skill text on its own, a Codex driver routing with `--target codex`, and the router's fallback path when every scoring provider fails (covered by effort-router's tests). Terra's place in the routine tier is an inference from its predecessor's description, not a measured result.
