@@ -16,7 +16,7 @@ ME = owner(DRIVER)
 
 
 class Fake(Integration):
-    """In-memory Rex: sessions hold blocks with sortable IDs, labels, and windows."""
+    """In-memory Rex: sessions hold blocks with sortable IDs and labels."""
 
     def __init__(self, cache, **kw):
         super().__init__(cache=cache, **kw)
@@ -24,10 +24,10 @@ class Fake(Integration):
         self.split_error, self.split_creates, self.down = None, True, False
         self.ghosts = []  # sessions `ls` reports that close before their block listing
 
-    def add(self, session, label="shell", window="w1"):
+    def add(self, session, label="shell"):
         self.n += 1
         block = f"block:{self.n:04d}"
-        self.sessions.setdefault(session, []).append(dict(block_id=block, label=label, window_id=window))
+        self.sessions.setdefault(session, []).append(dict(block_id=block, label=label))
         return block
 
     def labels(self):
@@ -48,9 +48,8 @@ class Fake(Integration):
             return json.dumps({"blocks": self.sessions[args[3]]})
         if args[0] == "split":
             session, anchor = args[2], args[4]
-            window = next(b["window_id"] for b in self.sessions[session] if b["block_id"] == anchor)
             if self.split_creates:
-                block = self.add(session, args[args.index("--label") + 1], window)
+                block = self.add(session, args[args.index("--label") + 1])
             if self.split_error:
                 raise self.split_error
             return json.dumps({"anchor_id": anchor, "block_ids": [block]})
@@ -199,20 +198,19 @@ class LaunchTests(Base):
         self.launch("w1")
         self.assertEqual(len(self.app.splits()), 1)
 
-    def test_alternation_and_anchor(self):
+    def test_alternation_around_driver(self):
         self.agent()
         seen = []
         for name in ("w1", "w2", "w3"):
             self.launch(name)
             call = self.app.splits()[-1]
             seen.append((self.option(call, "-b"), call[5]))
-        w1, w2 = self.app.sessions["session:a"][1]["block_id"], self.app.sessions["session:a"][2]["block_id"]
-        self.assertEqual(seen, [(self.driver, "--split=right"), (w1, "--split=below"), (w2, "--split=right")])
+        self.assertEqual(seen, [(self.driver, "--split=right"), (self.driver, "--split=below"),
+                                (self.driver, "--split=right")])
         self.app.sessions["session:a"].pop()  # manual close of w3
-        self.app.add("session:a", f"rex-agents:{ME}:elsewhere", window="w2")
         self.launch("w4")
         call = self.app.splits()[-1]
-        self.assertEqual((self.option(call, "-b"), call[5]), (w2, "--split=below"))
+        self.assertEqual((self.option(call, "-b"), call[5]), (self.driver, "--split=below"))
 
     def test_human_launch_always_right_from_driver(self):
         self.app.add("session:a", "rex-agents:-:old")

@@ -103,3 +103,11 @@ Reason's MCP `ask_user` pops a question up on the human's screen and waits, and 
 Fixture-only: a human-launched worker's `ask_user` passes untouched, since Reason pops it up itself. Codex workers have no hook for `ask_user`; only the task's rules stop them.
 
 The suite has 34 tests.
+
+## Splits anchor on the driver (2026-10-27)
+
+Owned launches now split the driver pane every time, alternating `right` and `below`. Earlier sections that say a worker "anchored on the first worker" describe the previous behavior.
+
+Live run from a Claude driver pane, without reinstalling: three idle `claude-sonnet-5-5` workers (`--effort low`, no task) all reported the driver as `anchor_id`. `rex window ls --json` showed the driver window as a horizontal split (worker 1 on the right half), whose left half was a vertical split (worker 2 on the bottom), whose top was a horizontal split (driver, then worker 3 on its right). `cleanup` closed all three, exited 0, and removed the caller's split state. Panes owned by another driver were untouched.
+
+Fixture-only: human launches still split right from the driver every time.

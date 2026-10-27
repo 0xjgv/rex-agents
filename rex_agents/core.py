@@ -253,22 +253,18 @@ class Integration:
         splits = self.cache/"splits"/f"{me}.json"
         with self.lock():
             blocks = self.panes()
-            driver = next((b for b in blocks if b["block_id"] == self.block), None)
-            if driver is None:
+            if not any(b["block_id"] == self.block for b in blocks):
                 raise Error(f"Driver pane {self.block} not found in Rex")
             if any((parent := parse(b.get("label"))) and parent[0] != HUMAN for b in blocks if b["block_id"] in own):
                 raise Error("Owned workers cannot launch nested workers")
             if any((worker := parse(b.get("label"))) and worker[1] == name for b in blocks):
                 raise Error(f"Worker {name} already has a Rex pane; close it before relaunching")
-            anchor, direction = self.block, "right"
+            direction = "right"
             if me != HUMAN:
-                # Stay in the driver's tab; alternate from the last launch, even if that pane closed.
-                mine = [b["block_id"] for b in blocks if (w := parse(b.get("label"))) and w[0] == me
-                        and b["session"] == driver["session"] and b.get("window_id") == driver.get("window_id")]
-                anchor = mine[-1] if mine else self.block
+                # Split the driver pane, alternating from the last launch even if that pane closed.
                 direction = "below" if read(splits, {}).get("split") == "right" else "right"
             try:
-                result = decode(self.rex("split", "-s", self.session, "-b", anchor, f"--split={direction}",
+                result = decode(self.rex("split", "-s", self.session, "-b", self.block, f"--split={direction}",
                                          "-c", str(directory), "--label", label, "--focus=false", "--json",
                                          "--", *argv))
             except Error as exc:

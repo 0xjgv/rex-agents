@@ -31,7 +31,7 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 The result returns pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
-Owned launches alternate `right`, `below`, `right`, using the last launch direction even after a pane was closed. Each one anchors on the newest owned worker in the driver's tab, or on the driver pane. Human launches split right from the driver. Launches never take focus or open tabs. A split can resize the layout and end Rex's zoom mode.
+Owned launches split the driver pane, alternating `right`, `below`, `right`, using the last launch direction even after a pane was closed. Human launches split right from the driver. Launches never take focus or open tabs. A split can resize the layout and end Rex's zoom mode.
 
 ## Worker protocol
 
