@@ -20,13 +20,13 @@ You drive. Each worker is a native interactive Claude Code or Codex conversation
 | astra | `gpt-6-astra` | Codex |
 | luna | `gpt-6-luna` | Codex |
 
-The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use the model and effort the user names. Route whatever they leave open when `EFFORT_ROUTER_DIR` is set: write the task file, then score it for your own harness (`--target claude` in Claude Code, `--target codex` in Codex), or for the harness the user or a team role names:
+The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use the model and effort the user names. Route whatever they leave open when `EFFORT_ROUTER_DIR` is set: write the task file, then score it for your own harness by excluding the other (`--exclude codex` in Claude Code, `--exclude claude` in Codex), or for the harness the user or a team role names:
 
 ```sh
-python3 "$EFFORT_ROUTER_DIR/route.py" --target claude --json -- "$(cat /path/task.txt)"
+python3 "$EFFORT_ROUTER_DIR/route.py" --exclude codex --json -- "$(cat /path/task.txt)"
 ```
 
-It prints `{"model": ..., "effort": ..., "tier": ...}`. Map a short name through the table, launch with that model and effort, and tell the user the tier and pick, such as "routed: hard → opus, high". The router sends the task text to its scoring service and can take up to half a minute when providers fail. Without `EFFORT_ROUTER_DIR`, or when the command fails, choose for the task yourself and tell the user what you chose. Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Use low or medium for lookups and routine edits, high or xhigh for plans, reviews, and hard bugs. Every worker gets a pane, even on your own harness; do not substitute a native subagent or another model.
+It prints `{"model": ..., "effort": ..., "tier": ..., "harness": ...}`. Map a short name through the table, launch with that model and effort, and tell the user the tier and pick, such as "routed: hard → opus, high". The router sends the task text to its scoring service and can take up to half a minute when providers fail. Without `EFFORT_ROUTER_DIR`, or when the command fails, choose for the task yourself and tell the user what you chose. Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Use low or medium for lookups and routine edits, high or xhigh for plans, reviews, and hard bugs. Every worker gets a pane, even on your own harness; do not substitute a native subagent or another model.
 
 ## Launch
 
