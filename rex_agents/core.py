@@ -176,6 +176,13 @@ class Integration:
         self.session = self.session or location["session"]
         self.block = self.block or location["block"]
 
+    def own(self, identity):
+        """Panes the caller may be running in; an explicit --block must not hide the real one."""
+        found = {self.block, os.environ.get("REX_BLOCK")}
+        if identity:
+            found.add(read(self.locator(identity), {}).get("block"))
+        return found - {None}
+
     def panes(self, session=None):
         """Blocks in one session, or all sessions, oldest first: Rex block IDs are UUIDv7."""
         if session:
@@ -220,10 +227,7 @@ class Integration:
         identity = native_identity()
         me = owner(identity)
         self.where(identity)
-        # An explicit --block must not let a worker escape the nesting guard.
-        own = {self.block, os.environ.get("REX_BLOCK")}
-        if identity:
-            own.add(read(self.locator(identity), {}).get("block"))
+        own = self.own(identity)
         argv = [executable, "--name", name] if kind == "claude" else [executable, "--no-daemon"]
         if model is not None:
             argv += ["--model" if kind == "claude" else "-m", model]
@@ -267,6 +271,7 @@ class Integration:
         me = owner(identity)
         with contextlib.suppress(Error):
             self.where(identity)
+        own = self.own(identity)
         result = dict(closed=[], gone=[], uncertain=[])
         with self.lock():
             try:
@@ -276,7 +281,7 @@ class Integration:
                 return result
             for pane, worker in owned:
                 item = dict(name=worker[1], session=pane["session"], block=pane["block_id"])
-                if pane["block_id"] == self.block:
+                if pane["block_id"] in own:
                     result["uncertain"].append(dict(item, error="Refusing to close the driver's own pane"))
                     continue
                 try:

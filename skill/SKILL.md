@@ -30,7 +30,7 @@ Never poll, read, or acknowledge another conversation's Reason inbox. Reason's o
 
 ## Launch and cleanup rules
 
-Each worker pane is labeled `rex-agents:<owner>:<name>`. The owner is a hash of your native conversation ID, or `-` for a human launch. The label is the only worker record. A launch refuses a name that already has a pane, and a worker pane cannot launch more workers. Launches return pane IDs immediately with `registration: pending`; the worker is not ready until it messages you.
+Each worker pane is labeled `rex-agents:<owner>:<name>`. The owner is a hash of your native conversation ID, or `-` for a human launch. The label is the only worker record. A launch refuses a name that already has a pane, and an owned worker pane cannot launch more workers. Launches return pane IDs immediately with `registration: pending`; the worker is not ready until it messages you.
 
 If a launch reports an uncertain outcome, look for its label in Rex before retrying. A retry refuses while the labeled pane exists.
 

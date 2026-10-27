@@ -267,6 +267,18 @@ class CleanupTests(Base):
         self.assertEqual(self.app.cleanup()["uncertain"], [])
         self.assertFalse(splits.exists())
 
+    def test_explicit_block_does_not_expose_running_pane(self):
+        self.agent()
+        running = self.app.add("session:a", f"rex-agents:{ME}:resumed")
+        core.atomic(self.app.locator(DRIVER), dict(server="unix:s", session="session:a", block=running))
+        os.environ["REX_BLOCK"] = running
+        result = self.app.cleanup()
+        self.assertIn(running, [b["block_id"] for b in self.app.sessions["session:a"]])
+        self.assertEqual([i["block"] for i in result["uncertain"]], [running])
+        del os.environ["REX_BLOCK"]
+        self.app.cleanup()
+        self.assertIn(running, [b["block_id"] for b in self.app.sessions["session:a"]])
+
     def test_rex_unavailable_is_uncertain(self):
         self.agent()
         self.app.down = True
