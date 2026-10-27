@@ -17,8 +17,13 @@ PREFIX = "rex-agents:"
 HUMAN = "-"
 NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}"
 SELECTOR = r"[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}(?:\[[A-Za-z0-9_-]+\])?"
+# The model picks the native CLI that runs the worker.
+HARNESS = {"claude-": "claude", "gpt-": "codex"}
 # Hook events that mean a prompt is blocking the worker. Earlier versions registered others.
 BLOCKING = ("PreToolUse", "PermissionRequest")
+# Only the driver talks to the human, so an owned worker's question goes to the driver instead.
+RELAY = ("You are a rex-agents worker, and only your driver talks to the human. Send this question to your "
+         "driver with MCP send_message, at the Reason address in your task, then wait for its reply.")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 
 
@@ -143,16 +148,19 @@ class Integration:
         if event not in BLOCKING:
             return
         try:
-            self.alert((kind, native_id), payload)
+            return self.alert((kind, native_id), payload)
         except (Error, LookupError, TypeError):
             pass
 
     def alert(self, identity, payload):
-        """Pop up a launched worker's blocking prompt; its unfocused pane may go unseen."""
+        """Send an owned worker's question to its driver; pop up other blocking prompts, since the pane may go unseen."""
         pane = next((b for b in self.panes(self.session) if b["block_id"] == self.block), {})
         worker = parse(pane.get("label"))
         if not worker:
             return
+        if payload.get("tool_name") == "AskUserQuestion" and worker[0] != HUMAN:
+            return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": RELAY}}
         def dicts(value):
             return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
         tool = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
@@ -211,12 +219,15 @@ class Integration:
             fcntl.flock(stream, fcntl.LOCK_EX)
             yield
 
-    def launch(self, kind, name, cwd, task=None, model=None, effort=None):
+    def launch(self, name, cwd, model, task=None, effort=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort)):
             if value is not None and not re.fullmatch(SELECTOR, value):
                 raise Error(f"Invalid {label}: expected a model or effort identifier")
+        kind = next((k for prefix, k in HARNESS.items() if model.startswith(prefix)), None)
+        if not kind:
+            raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
         directory = Path(cwd).expanduser().resolve()
         if not directory.is_dir():
             raise Error(f"Working directory does not exist: {directory}")
@@ -229,8 +240,7 @@ class Integration:
         self.where(identity)
         own = self.own(identity)
         argv = [executable, "--name", name] if kind == "claude" else [executable, "--no-daemon"]
-        if model is not None:
-            argv += ["--model" if kind == "claude" else "-m", model]
+        argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
         if task is not None:

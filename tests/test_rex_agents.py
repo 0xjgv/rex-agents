@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -90,8 +91,8 @@ class Base(unittest.TestCase):
     def agent(self, kind="claude-code", native_id="drv"):
         os.environ["CODEX_THREAD_ID" if kind == "codex" else "CLAUDE_CODE_SESSION_ID"] = native_id
 
-    def launch(self, name, kind="claude", **kw):
-        return self.app.launch(kind, name, str(self.cwd), **kw)
+    def launch(self, name, model="claude-opus-5-5", **kw):
+        return self.app.launch(name, str(self.cwd), model, **kw)
 
     def argv(self, call):
         return list(call[call.index("--") + 1:])
@@ -114,22 +115,32 @@ class LaunchTests(Base):
         self.assertEqual(self.option(call, "-c"), str(self.cwd.resolve()))
         self.assertEqual(result["registration"], "pending")
 
-    def test_codex_argv(self):
+    def test_gpt_model_runs_codex(self):
         self.agent()
-        self.launch("w1", kind="codex", model="gpt-6.1-sol", effort="high")
+        self.launch("w1", model="gpt-6.1-sol", effort="high")
         self.assertEqual(self.argv(self.app.splits()[0]),
                          ["/bin/agent", "--no-daemon", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'])
 
     def test_invalid_input_rejected_before_rex(self):
         self.agent()
         for kw in ({"name": "bad name"}, {"name": "x" * 65}, {"name": "w", "model": "a b"},
-                   {"name": "w", "effort": "$(id)"}):
+                   {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"}):
             name = kw.pop("name")
             with self.assertRaises(Error):
                 self.launch(name, **kw)
         with self.assertRaises(Error):
-            self.app.launch("claude", "w", str(self.tmp/"missing"))
+            self.app.launch("w", str(self.tmp/"missing"), "claude-opus-5-5")
         self.assertEqual(self.app.calls, [])
+
+    def test_cli_launch_requires_model(self):
+        self.agent()
+        argv = ["launch", "--name", "w1", "--cwd", str(self.cwd)]
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"), \
+                mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit):
+                cli.main(argv)
+            self.assertEqual(cli.main([*argv, "--model", "gpt-6-astra"]), 0)
+        self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-m", "gpt-6-astra"])
 
     def test_duplicate_name_refused_for_any_owner_and_session(self):
         self.agent()
@@ -217,12 +228,12 @@ class LaunchTests(Base):
         app = Fake(self.tmp/"cache")
         app.sessions, app.n = self.app.sessions, self.app.n
         core.atomic(app.locator(("codex", "cx")), dict(server="unix:s", session="session:a", block=self.driver))
-        app.launch("codex", "w1", str(self.cwd))
+        app.launch("w1", str(self.cwd), "claude-opus-5-5")
         call = app.splits()[0]
         self.assertEqual((call[2], self.option(call, "-b")), ("session:a", self.driver))
         os.environ["CODEX_THREAD_ID"] = "unknown"
         with self.assertRaisesRegex(Error, "--session and --block"):
-            Fake(self.tmp/"cache").launch("codex", "w2", str(self.cwd))
+            Fake(self.tmp/"cache").launch("w2", str(self.cwd), "claude-opus-5-5")
 
     def test_identity_conflicts(self):
         os.environ.update(CODEX_THREAD_ID="cx", CLAUDECODE="1")
@@ -341,10 +352,29 @@ class HookTests(Base):
         self.assertIn("helper is waiting", stdin)
         self.assertIn("rm -rf build", stdin)
 
-    def test_question_detail(self):
-        self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": "AskUserQuestion",
-                      "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}, {"label": "No"}]}]}})
+    def test_owned_worker_question_goes_to_driver(self):
+        result = self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": "AskUserQuestion",
+                               "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}]}]}})
+        decision = result["hookSpecificOutput"]
+        self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
+        self.assertIn("send_message", decision["permissionDecisionReason"])
+        self.assertEqual(self.sent, [])
+
+    def test_human_launched_worker_question_alerts_human(self):
+        self.app.sessions["session:a"][-1]["label"] = "rex-agents:-:helper"
+        result = self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": "AskUserQuestion",
+                               "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}, {"label": "No"}]}]}})
+        self.assertIsNone(result)
         self.assertIn("Ship? [Yes, No]", self.sent[-1][2])
+
+    def test_cli_prints_hook_decision(self):
+        fake = mock.Mock()
+        fake.hook.return_value = {"hookSpecificOutput": {"permissionDecision": "deny"}}
+        with mock.patch.object(cli, "Integration", return_value=fake), mock.patch.object(cli, "installed", return_value=True), \
+                mock.patch("sys.stdin", io.StringIO('{"session_id": "s1"}')), \
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.assertEqual(cli.main(["_hook", "claude-code", "PreToolUse"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_non_worker_pane_and_reason_failure_are_quiet(self):
         self.app.sessions["session:a"][-1]["label"] = "shell"

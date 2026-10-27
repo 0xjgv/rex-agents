@@ -14,15 +14,15 @@ rex config reload
 Reason's Claude and Codex integrations must be enabled separately through supported Reason setup. Ordinary commands never install Reason or change its configuration.
 
 ```sh
-rex-agents launch claude --name reviewer --cwd /absolute/project --model claude-opus-5-5 --effort xhigh --task-file /tmp/task.txt
-rex-agents launch codex --name helper --cwd /absolute/project --model gpt-6.1-sol --effort high --task-file /tmp/task.txt
+rex-agents launch --name reviewer --cwd /absolute/project --model claude-opus-5-5 --effort xhigh --task-file /tmp/task.txt
+rex-agents launch --name helper --cwd /absolute/project --model gpt-6.1-sol --effort high --task-file /tmp/task.txt
 rex-agents cleanup
 ```
 
-For same-harness work, use native subagents when they support the requested model and effort. Use this launcher for cross-harness work or an explicit interactive pane. `--model` and `--effort` are optional; omitted values inherit native settings.
+The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. `--model` is required; an omitted `--effort` inherits native settings. Every worker runs in a pane, even on the driver's own harness. The skill maps short names (sol, terra, astra, opus, fable, sonnet) to model IDs and has the driver choose the effort.
 
 Each worker pane carries the label `rex-agents:<owner>:<name>`, the only worker record. Launches never take focus. An owned worker cannot launch more workers. The driver collects results through Reason, then runs `rex-agents cleanup` before its final answer. Cleanup closes that driver's labeled panes, including unfinished workers. It prints `closed`, `gone`, and `uncertain` JSON and exits 1 on uncertainty.
 
-When a launched worker blocks on AskUserQuestion or a permission prompt, a hook pops up a Reason notification to the human.
+When a driver-owned Claude worker opens AskUserQuestion, a hook refuses it and tells the worker to ask its driver through Reason. When a worker blocks on a permission prompt, the hook pops up a Reason notification to the human.
 
 After hook definitions change, rerun `rex-agents install` and re-trust Codex hooks through `/hooks`. See [VERIFICATION.md](VERIFICATION.md) for measured results and limits.

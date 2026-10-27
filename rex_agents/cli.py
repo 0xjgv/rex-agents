@@ -14,11 +14,10 @@ def parser():
         p.add_argument("--" + option)
     commands = p.add_subparsers(dest="command", required=True)
     launch = commands.add_parser("launch")
-    launch.add_argument("kind", choices=("claude", "codex"))
     launch.add_argument("--name", required=True)
     launch.add_argument("--cwd", required=True)
     launch.add_argument("--task-file")
-    launch.add_argument("--model", help="Native worker model; omitted values inherit")
+    launch.add_argument("--model", required=True, help="claude-* runs Claude Code; gpt-* runs Codex")
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
     commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     commands.add_parser("install")
@@ -36,7 +35,7 @@ def main(argv=None):
         result = None
         if args.command == "launch":
             task = Path(args.task_file).read_text() if args.task_file else None
-            result = app.launch(args.kind, args.name, args.cwd, task, model=args.model, effort=args.effort)
+            result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort)
         elif args.command == "cleanup":
             result = app.cleanup()
             print(json.dumps(result, indent=2))
@@ -46,7 +45,7 @@ def main(argv=None):
         elif args.command == "_hook":
             if not installed():
                 return 0
-            app.hook(args.kind, args.event, decode(sys.stdin.read()))
+            result = app.hook(args.kind, args.event, decode(sys.stdin.read()))
         if result is not None:
             print(json.dumps(result, indent=2))
         return 0

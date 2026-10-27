@@ -6,13 +6,13 @@ Rex agents launches native interactive Claude Code and Codex workers into Rex sp
 
 - `rex-agents launch` opens a worker in an unfocused split beside the driver, with optional model and effort.
 - `rex-agents cleanup` closes the calling driver's workers.
-- A hook pops up a Reason notification when a launched worker blocks on AskUserQuestion (Claude) or a permission prompt (Claude and Codex).
+- A hook sends a driver-owned Claude worker's AskUserQuestion to its driver instead of the human. It pops up a Reason notification when a worker blocks on a permission prompt (Claude and Codex).
 
 Find agents with `reason-network who` or MCP `list_team`. Message them with MCP `send_message`. Earlier versions also had `list`, `send`, `focus`, `navigation`, `doctor`, remote hosts, and Rex palette actions. Those are removed.
 
-## Choose the delegation route
+## Choose model and effort
 
-When the worker uses the driver's own harness, prefer native subagents if they support the requested model and effort. Use `rex-agents launch` when crossing harnesses, when you want a visible interactive worker, or when native subagents cannot select the requested model and effort. Keep the requested model rather than substituting another.
+Ask the driver to work with a model by name: sol, terra, astra (Codex) or opus, fable, sonnet (Claude Code). The skill maps each name to its model ID. The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. The driver uses the model and effort you name, and chooses them itself when you don't. Every worker runs in a pane, even on the driver's own harness.
 
 ## Launch a worker
 
@@ -23,11 +23,11 @@ Do not change files. Give file references and concrete reasons.
 When done, send your result with MCP send_message to person/driver-session.
 TASK
 
-rex-agents launch claude --name reviewer --cwd /Users/juan/Code/rex-agents \
+rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
   --model claude-opus-5-5 --effort xhigh --task-file /tmp/review-task.txt
 ```
 
-Claude drivers call Codex with `--model gpt-6.1-sol --effort high`. Codex drivers call Claude with `--model claude-opus-5-5 --effort xhigh`. Both flags are optional; omitted values inherit native settings. Selectors change no global defaults or permissions. The directory must exist. The launcher creates no worktree. It passes the task once as one argument; nothing evaluates it as shell code. Names use letters, digits, underscores, or hyphens, up to 64 characters.
+`--model` is required. An omitted `--effort` inherits native settings. Selectors change no global defaults or permissions. The directory must exist. The launcher creates no worktree. It passes the task once as one argument; nothing evaluates it as shell code. Names use letters, digits, underscores, or hyphens, up to 64 characters.
 
 The result returns pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
@@ -59,11 +59,11 @@ The pane label is the only worker record: `rex-agents:<owner>:<name>`. The owner
 Claude shells carry `REX_SESSION` and `REX_BLOCK`. Codex tool shells do not, even with `--no-daemon`. The `SessionStart` hook records each conversation's pane in `~/.cache/rex-agents/sessions/<owner>.json`, and launch and cleanup fall back to it. If the hook has not run (for example, Codex hooks are not trusted), pass the pane explicitly:
 
 ```sh
-rex-agents --session SESSION_ID --block BLOCK_ID launch codex \
-  --name helper --cwd /absolute/project --task-file /tmp/task.txt
+rex-agents --session SESSION_ID --block BLOCK_ID launch \
+  --name helper --cwd /absolute/project --model gpt-6.1-sol --task-file /tmp/task.txt
 ```
 
-Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. If the pane is a worker, it sends the human a `--notify` message as the worker. The prompt still waits in the pane. Codex model questions (`request_user_input`) have no hook.
+Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. In a driver-owned worker, it refuses `AskUserQuestion` and tells the worker to send the question to its driver through Reason. For other blocking prompts in a worker pane, it sends the human a `--notify` message as the worker, and the prompt still waits in the pane. Codex model questions (`request_user_input`) have no hook; the task's rules are the only guard.
 
 ## Install
 

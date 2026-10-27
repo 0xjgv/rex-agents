@@ -59,3 +59,36 @@ Reinstall migration on the live configuration:
 - The `require` line and `rex_agents.lua` were removed.
 - `rex config check` reported zero actions, and `rex config reload` succeeded.
 - Codex hooks still need re-trust through `/hooks`.
+
+## Model picks the harness (2026-10-27)
+
+`launch` takes no harness argument. `--model` is required: `claude-*` runs Claude Code, `gpt-*` runs Codex. The skill maps sol, terra, astra, opus, fable, and sonnet to model IDs. Every worker gets a pane, even on the driver's own harness. The colliding skills (Claude `sol`, `astra`, `fable`, `opus`, `sonnet`; Codex `fable`) were deleted, and the Codex `fable` MCP server that the deleted skill hosted was disabled.
+
+Live run from a Claude driver pane, without reinstalling:
+
+- `launch --model gpt-6.1-sol --effort low` opened Codex. Its footer showed `GPT-6.1-Sol low`.
+- `launch --model claude-sonnet-5-5 --effort low` opened Claude Code, anchored on the first worker. Its header showed `Sonnet 5.5 with low effort`, and it answered the task.
+- `launch --model llama-4` was refused before Rex: `Unknown model family llama-4: expected claude-* or gpt-*`.
+- `cleanup` closed both workers and exited 0.
+
+## Dogfood: plain-language drivers (2026-10-27)
+
+Two fresh driver conversations ran in their own Rex tabs, opened as a human would, with no model or effort hints. The prompts, both final plans, and the pane watch logs are in `.verification/dogfood-2026-10-27/`.
+
+- **Claude driver** (`claude`, default Opus 5.5 xhigh, `--allowedTools` for `rex-agents`, `reason-network`, and the Reason MCP send and list tools). The prompt began "Work with sol 6.1 on a plan". It loaded `Skill(rex-agents)` first, launched `sol-plan` on `gpt-6.1-sol` at effort `high`, which it chose itself, and exchanged several rounds with sol.
+- **Codex driver** (plain `codex`, with the shared app-server daemon, `model_reasoning_effort="medium"` to save time). The prompt began "Work with opus on a plan". It used `/Users/juan/.agents/skills/rex-agents/SKILL.md`, launched `opus-cleanup-plan` on Claude Opus 5.5 at effort `high`, agreed a five-bullet plan over several rounds, ran `rex-agents cleanup` itself, and closed opus. It launched without `--session` or `--block`. Its `SessionStart` hook wrote locator `d81bdee8d2826351.json`, pointing to its own pane, even though it was started without `--no-daemon`. That conflicts with the note that the shared app server drops `REX_*` before hooks, which may be stale for Codex 0.164. Whether this pane used the shared daemon was not checked, so workers keep `--no-daemon`.
+- **Idle wake.** The Claude driver ended its turn at 09:57:09 UTC ("Waiting on sol's revision"). At 09:58:27 sol's Reason message started a new turn: "Another Claude session sent a message: <reason-message …>". No task notification came first. A relay worker showed the same thing: it ended its turn at 09:57:55 and woke at 09:58:00 on the driver's reply. Codex idle wake was already recorded (`it runs after the current turn, or now if idle`).
+- **Question relay.** A haiku worker told to call AskUserQuestion was refused by the hook: `PreToolUse:AskUserQuestion hook error: You are a rex-agents worker, and only your driver talks to the human. …`. It sent the question to its driver with `send_message`, and the driver's reply woke it. Nothing waited on the human.
+- **Human alerts.** Before the relay change, an AskUserQuestion in a Claude worker and a command approval in a worker-labeled Codex pane (`approval_policy="on-request"`, `sandbox_mode="read-only"`) each fired the hook. The human first reported no pop-up, then reported that both appeared, so delivery may lag. A direct `alert()` replay popped up. `approval_policy = "untrusted"` is rejected by Codex 0.164: `Error loading configuration: approval_policy = "untrusted" is no longer supported; remove this setting`.
+- Codex hooks are trusted: `SessionStart` wrote locators for Codex workers. The `⚠ 1 warning` is gone from `--no-daemon` panes started after the `fable` MCP server was disabled. It remains in the daemon-backed Codex driver pane, probably because that daemon loaded the old config (inferred, not checked).
+- `This machine isn't on a Reason Network yet: ask your user to run \`reason network\`.` trails every successful send. It concerns team enrollment (`"team": null`), not delivery.
+
+Findings fed back: the skill now tells drivers to end their turn while waiting, because the Claude driver had built its own pane watcher to wake itself. The new hook relays worker questions to the driver.
+
+Still open:
+
+- Codex permission prompts never happen on this machine (`approval_policy = "never"`), so the Codex alert is rarely reachable.
+- Codex `request_user_input` has no hook; only the task's rules keep it from reaching the human.
+- Drivers and workers alike rename the shared Rex session when the Rex `SessionStart` hook asks them to name their work. Here the Codex driver and the `sol-plan` worker (`worker-startup-detection`) both renamed it.
+
+The suite has 33 tests.
