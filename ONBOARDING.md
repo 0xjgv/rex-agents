@@ -1,11 +1,11 @@
 # Rex agents onboarding
 
-Rex agents launches native interactive Claude Code and Codex workers into Rex split panes, and closes the workers a driver owns. Reason handles discovery and messaging. Rex handles terminals.
+Rex agents launches native interactive Claude Code and Codex workers into a Rex session of their own, and closes the workers a driver owns. Reason handles discovery and messaging. Rex handles terminals.
 
 ## What it does, and what it leaves to Reason
 
-- `rex-agents launch` opens a worker in an unfocused split beside the driver, with optional model and effort.
-- `rex-agents cleanup` closes the calling driver's workers.
+- `rex-agents launch` opens a worker in an unfocused pane in the driver's workers session, with optional model and effort.
+- `rex-agents cleanup` closes the calling driver's workers, and the workers session once it is empty.
 - A hook sends a driver-owned Claude worker's AskUserQuestion or Reason `ask_user` to its driver instead of the human. It pops up a Reason notification when a worker blocks on a permission prompt (Claude and Codex).
 
 Find agents with `reason-network who` or MCP `list_team`. Message them with MCP `send_message`. Earlier versions also had `list`, `send`, `focus`, `navigation`, `doctor`, remote hosts, and Rex palette actions. Those are removed.
@@ -29,9 +29,9 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 `--model` is required. An omitted `--effort` inherits native settings. Selectors change no global defaults or permissions. The directory must exist. The launcher creates no worktree. It passes the task once as one argument; nothing evaluates it as shell code. Names use letters, digits, underscores, or hyphens, up to 64 characters.
 
-The result returns pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
+The result returns the session ID, pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
-Owned launches split the driver pane, alternating `right`, `below`, `right`, using the last launch direction even after a pane was closed. Human launches split right from the driver. Launches never take focus or open tabs. A split can resize the layout and end Rex's zoom mode.
+The driver's pane never splits. The first worker opens a new Rex session named after the driver's session, such as `fix-login-workers`. Switch to it to watch the workers. Later workers join the session of the newest worker and fill columns of two, left to right: a worker goes below the newest worker when that worker's column has room, and otherwise opens a new full-height column. All columns keep the same width. Placement reads the live layout, so closing a pane never leaves three workers in a column. Human launches follow the same rule. Launches never take focus. `cleanup` closes the workers session once it is empty. A session that empties because its workers exited on their own stays until you close it.
 
 ## Worker protocol
 

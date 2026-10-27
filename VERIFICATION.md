@@ -111,3 +111,31 @@ Owned launches now split the driver pane every time, alternating `right` and `be
 Live run from a Claude driver pane, without reinstalling: three idle `claude-sonnet-5-5` workers (`--effort low`, no task) all reported the driver as `anchor_id`. `rex window ls --json` showed the driver window as a horizontal split (worker 1 on the right half), whose left half was a vertical split (worker 2 on the bottom), whose top was a horizontal split (driver, then worker 3 on its right). `cleanup` closed all three, exited 0, and removed the caller's split state. Panes owned by another driver were untouched.
 
 Fixture-only: human launches still split right from the driver every time.
+
+## Columns of two (2026-10-27)
+
+The driver splits once. Later workers fill full-height columns of two beside it, and every column keeps the same width. Launch now calls Rex's `session.new_split` API through `rex api call`, because `rex split -b` refuses a split ID (`"split:…" is a split ID, not a block`), and only a split anchor can open a full-height column. The previous section describes the behavior this replaces. The `splits/<owner>.json` cache is gone.
+
+- Environment parity: in a scratch session, a pane from `rex split -- CMD` and a pane from `session.new_split` with `command`, `cwd`, and the caller's `PATH` as `path_prepend` had identical `env` output, apart from `REX_BLOCK` and `_`. Without `path_prepend`, the API pane lacked the caller's `PATH` entries from `.zshrc`.
+- Live run from a Claude driver pane, without reinstalling: five idle `claude-sonnet-5-5` workers (`--effort low`, no task). Anchors: the driver, `col1`, `col1`'s column split, `col3`, then the split holding all worker columns. `rex window ls --json` showed the driver at `[0, 0, 0.5, 1]`, then `col1/col2`, `col3/col4`, and `col5`, each column 0.167 wide.
+- `col6` went below `col5`. After `rex block close` on `col1`, five workers remained and the newest column was full, so `col7` opened a fourth column with ratio 0.75. All four columns were 0.125 wide, with `col2` alone at full height.
+- In both layout snapshots, the driver window's `focused_block_id` was still the driver, and the driver's window never became active.
+- The `col5` pane showed `Sonnet 5.5 with low effort`. `cleanup` closed `col2` through `col7` and exited 0. Panes owned by another driver were untouched.
+
+Fixture-only: human launches use the same placement. No Codex worker ran through the API path; the environment probe and `test_gpt_model_runs_codex` cover its argv.
+
+The suite has 35 tests.
+
+## Workers session (2026-10-27)
+
+Workers now open in a Rex session of their own, and the driver's pane never splits. The first launch calls `session.create` with a session labeled `<driver session label>-workers`. Later launches call `session.new_split` in the session of the newest owned pane and fill columns of two, as in the previous section. That section's layout beside the driver is replaced. `cleanup` kills a session it emptied.
+
+- Live run from a Claude driver pane, without reinstalling: five idle `claude-sonnet-5-5` workers (`--effort low`, no task). All five reported the same `session_id`, labeled `csproj-lockfile-fix-workers` after the driver's session. Anchors: `q1`, `q1`'s column split, `q3`, then the window's root split.
+- `rex window ls --json` showed one window: `q1/q2`, `q3/q4`, and `q5`, each column 0.333 wide. The driver's layer was still the driver alone at `[0, 0, 1, 1]`, and it was still focused.
+- The user watched the screen during the launches and reported that the Rex view stayed put.
+- The `q5` pane showed `Sonnet 5.5 with low effort`. `cleanup` closed `q1` through `q5` and exited 0. `rex ls` then listed only the driver's session.
+- Rex accepts duplicate session labels: `rex session new probe-dup` twice created two sessions with that label. Two drivers in one Rex session therefore get two workers sessions with the same name; launch does not fail.
+
+Fixture-only: workers join an existing owned pane's session; human launches use the same placement; cleanup leaves alone sessions that still hold other panes, and sessions that held none of the caller's panes. A workers session that empties because its workers exited on their own stays until the user closes it. No Codex worker ran through these API calls.
+
+The suite has 37 tests.

@@ -27,6 +27,7 @@ ASK_USER = "mcp__reason-network__ask_user"
 RELAY = ("You are a rex-agents worker, and only your driver talks to the human. Send this question to your "
          "driver with MCP send_message, at the Reason address in your task, then wait for its reply.")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
+TERMINAL = "com.superlogical.terminal.shell"
 
 
 class Error(Exception):
@@ -104,6 +105,26 @@ def parse(label):
     return (found, name) if found and name else None
 
 
+def node_id(node):
+    return node.get("block_id") or node["split"]["split_id"]
+
+
+def columns(node):
+    """Side-by-side parts of a Rex layout node."""
+    split = node.get("split")
+    return columns(split["before"]) + columns(split["after"]) if split and split["direction"] == "horizontal" else 1
+
+
+def parents(node, found=None):
+    """Node ID -> parent split, across a Rex layout tree."""
+    found = {} if found is None else found
+    if split := node.get("split"):
+        for child in (split["before"], split["after"]):
+            found[node_id(child)] = split
+            parents(child, found)
+    return found
+
+
 class Integration:
     def __init__(self, *, cache=None, server=None, session=None, block=None):
         self.cache = Path(cache or os.environ.get("XDG_CACHE_HOME", str(Path.home()/".cache")))
@@ -113,11 +134,11 @@ class Integration:
         self.session = session or os.environ.get("REX_SESSION")
         self.block = block or os.environ.get("REX_BLOCK")
 
-    def rex(self, *args, timeout=12):
+    def rex(self, *args, stdin=None, timeout=12):
         argv = [os.environ.get("REX_AGENTS_REX", "rex"), "--autostart=false", "--timeout", f"{max(1, timeout - 2)}s"]
         if self.server:
             argv += ["-S", self.server]
-        return run(argv + list(args), timeout=timeout)
+        return run(argv + list(args), stdin=stdin, timeout=timeout)
 
     def reason(self, *args, identity, stdin=None):
         engine = os.environ.get("REX_AGENTS_REASON") or str(Path.home()/".reason/bin/reason-network")
@@ -216,6 +237,20 @@ class Integration:
             rows += [dict(row, session=name) for row in data["blocks"]]
         return sorted(rows, key=lambda row: row["block_id"])
 
+    def place(self, newest):
+        """(anchor, direction, ratio) for the next worker: below the newest one, or a new column once its column holds two."""
+        listing = decode(self.rex("window", "ls", "-s", newest["session"], "--json"))
+        try:
+            for window in listing["windows"]:
+                for layer in window["layers"] if window["window_id"] == newest.get("window_id") else ():
+                    column = parents(root := layer["layout"]).get(newest["block_id"])
+                    if column and column["direction"] == "vertical":
+                        # Open a column beside all the others, as wide as each of them.
+                        return node_id(root), "horizontal", columns(root) / (columns(root) + 1)
+        except (KeyError, TypeError) as exc:
+            raise Error(f"Cannot place the worker in Rex's layout: missing {exc}") from exc
+        return newest["block_id"], "vertical", 0.5
+
     @contextlib.contextmanager
     def lock(self):
         self.cache.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -250,28 +285,41 @@ class Integration:
         if task is not None:
             argv += ["--", task]
         label = f"{PREFIX}{me}:{name}"
-        splits = self.cache/"splits"/f"{me}.json"
         with self.lock():
             blocks = self.panes()
-            if not any(b["block_id"] == self.block for b in blocks):
+            driver = next((b for b in blocks if b["block_id"] == self.block), None)
+            if driver is None:
                 raise Error(f"Driver pane {self.block} not found in Rex")
             if any((parent := parse(b.get("label"))) and parent[0] != HUMAN for b in blocks if b["block_id"] in own):
                 raise Error("Owned workers cannot launch nested workers")
             if any((worker := parse(b.get("label"))) and worker[1] == name for b in blocks):
                 raise Error(f"Worker {name} already has a Rex pane; close it before relaunching")
-            direction = "right"
-            if me != HUMAN:
-                # Split the driver pane, alternating from the last launch even if that pane closed.
-                direction = "below" if read(splits, {}).get("split") == "right" else "right"
+            mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own]
+            # The caller's PATH goes first, as `rex split` sends it.
+            options = dict(command=argv, cwd=str(directory),
+                           path_prepend=[p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
+            layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
+            if mine:
+                # `rex split` takes only a pane as anchor; the API also takes a split, which a new column needs.
+                newest = mine[-1]
+                anchor, direction, ratio = self.place(newest)
+                method = "session.new_split"
+                request = dict(session_id=newest["session"], anchor_id=anchor, direction=direction, side="after",
+                               ratio=ratio, focus=False, layout=layout)
+            else:
+                # The first worker opens a session of its own, so the driver's pane never splits.
+                title = decode(self.rex("session", "inspect", driver["session"], "--json")).get("label") or "rex-agents"
+                method = "session.create"
+                request = dict(label=f"{title}-workers"[:128], initial_windows=[{"layout": layout}])
             try:
-                result = decode(self.rex("split", "-s", self.session, "-b", self.block, f"--split={direction}",
-                                         "-c", str(directory), "--label", label, "--focus=false", "--json",
-                                         "--", *argv))
+                result = decode(self.rex("api", "call", method, "-", stdin=json.dumps(request)))
             except Error as exc:
                 raise Error(f"Launch outcome uncertain for {name}: {exc}. "
                             f"A pane labeled {label} exists if Rex created it; a retry refuses while it does.") from exc
-            if me != HUMAN:
-                atomic(splits, {"split": direction})
+            if mine:
+                result = dict(result, session_id=newest["session"])
+            else:
+                result = dict(session_id=result["session_id"], **result["initial_windows"][0])
             return dict(result, name=name, label=label, registration="pending")
 
     def cleanup(self):
@@ -304,13 +352,17 @@ class Integration:
                     result["uncertain"].append(dict(item, error=str(exc)))
             # A close request alone does not prove the pane went away.
             try:
-                left, error = {b["block_id"] for b in self.panes()}, "Pane still present after close"
+                rows, error = self.panes(), "Pane still present after close"
             except Error as exc:
-                left, error = None, f"Pane absence unconfirmed: {exc}"
+                rows, error = None, f"Pane absence unconfirmed: {exc}"
             for item in list(result["closed"]):
-                if left is None or item["block"] in left:
+                if rows is None or item["block"] in {b["block_id"] for b in rows}:
                     result["closed"].remove(item)
                     result["uncertain"].append(dict(item, error=error))
-            if not result["uncertain"]:
-                (self.cache/"splits"/f"{me}.json").unlink(missing_ok=True)
+            # A workers session outlives its last pane; close the ones this cleanup emptied.
+            emptied = set() if rows is None else {i["session"] for i in result["closed"] + result["gone"]} - {
+                b["session"] for b in rows}
+            for session in emptied:
+                with contextlib.suppress(Error):
+                    self.rex("session", "kill", session)
         return result

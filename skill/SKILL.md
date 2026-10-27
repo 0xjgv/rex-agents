@@ -5,7 +5,7 @@ description: Work with other models as a team. Launch opus, fable, sonnet (Claud
 
 # Rex agents
 
-You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane beside you. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
+You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, in a workers session separate from yours. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
 
 ## Pick model and effort
 
