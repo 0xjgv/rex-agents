@@ -21,6 +21,8 @@ SELECTOR = r"[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}(?:\[[A-Za-z0-9_-]+\])?"
 HARNESS = {"claude-": "claude", "gpt-": "codex"}
 # Hook events that mean a prompt is blocking the worker. Earlier versions registered others.
 BLOCKING = ("PreToolUse", "PermissionRequest")
+# Reason's MCP tool that pops a question up on the human's screen.
+ASK_USER = "mcp__reason-network__ask_user"
 # Only the driver talks to the human, so an owned worker's question goes to the driver instead.
 RELAY = ("You are a rex-agents worker, and only your driver talks to the human. Send this question to your "
          "driver with MCP send_message, at the Reason address in your task, then wait for its reply.")
@@ -158,9 +160,11 @@ class Integration:
         worker = parse(pane.get("label"))
         if not worker:
             return
-        if payload.get("tool_name") == "AskUserQuestion" and worker[0] != HUMAN:
+        if payload.get("tool_name") in ("AskUserQuestion", ASK_USER) and worker[0] != HUMAN:
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                     "permissionDecisionReason": RELAY}}
+        if payload.get("tool_name") == ASK_USER:
+            return  # Reason pops it up itself.
         def dicts(value):
             return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
         tool = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}

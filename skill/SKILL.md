@@ -36,9 +36,9 @@ Every task states:
 
 1. Your Reason address. In Claude, take the `is_me` row of `reason-network who --json`. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
 2. The goal, files, constraints, and the shape of the answer you want.
-3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion or `request_user_input`; launch no workers and message no one else; say `DONE` when finished.
+3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers and message no one else; say `DONE` when finished.
 
-Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
+Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
 
 For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Workers cannot launch workers.
 
@@ -48,7 +48,7 @@ Save what must outlive the panes, then run `rex-agents cleanup` before your fina
 
 ## Trouble
 
-- A Claude worker's AskUserQuestion is refused by a hook that tells it to message you. Codex `request_user_input` has no hook.
+- A Claude worker's AskUserQuestion or Reason `ask_user` is refused by a hook that tells it to message you. Codex workers have no such hook; only the task's rules stop them.
 - A worker blocked on a permission prompt pops up a Reason notification to the human. The prompt still waits in its pane.
 - `No Rex pane known for this conversation`: pass `--session` and `--block` before `launch`.
 - `Owned workers cannot launch nested workers`: you are a worker. Message your driver instead.

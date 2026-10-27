@@ -353,11 +353,12 @@ class HookTests(Base):
         self.assertIn("rm -rf build", stdin)
 
     def test_owned_worker_question_goes_to_driver(self):
-        result = self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": "AskUserQuestion",
-                               "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}]}]}})
-        decision = result["hookSpecificOutput"]
-        self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
-        self.assertIn("send_message", decision["permissionDecisionReason"])
+        for tool in ("AskUserQuestion", "mcp__reason-network__ask_user"):
+            result = self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": tool,
+                                   "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}]}]}})
+            decision = result["hookSpecificOutput"]
+            self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
+            self.assertIn("send_message", decision["permissionDecisionReason"])
         self.assertEqual(self.sent, [])
 
     def test_human_launched_worker_question_alerts_human(self):
@@ -366,6 +367,12 @@ class HookTests(Base):
                                "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}, {"label": "No"}]}]}})
         self.assertIsNone(result)
         self.assertIn("Ship? [Yes, No]", self.sent[-1][2])
+
+    def test_human_launched_worker_reason_question_is_left_to_reason(self):
+        self.app.sessions["session:a"][-1]["label"] = "rex-agents:-:helper"
+        self.assertIsNone(self.app.hook("claude-code", "PreToolUse", {"session_id": "s1",
+                          "tool_name": "mcp__reason-network__ask_user", "tool_input": {"question": "Ship?"}}))
+        self.assertEqual(self.sent, [])
 
     def test_cli_prints_hook_decision(self):
         fake = mock.Mock()
@@ -423,7 +430,8 @@ class InstallTests(Base):
         self.assertEqual(claude["hooks"]["UserPromptSubmit"][0]["hooks"], [{"type": "command", "command": "other"}])
         self.assertNotIn("Stop", claude["hooks"])
         self.assertEqual({k: v for k, v in self.ours(self.claude).items() if v},
-                         {"SessionStart": [None], "PreToolUse": ["AskUserQuestion"], "PermissionRequest": [None]})
+                         {"SessionStart": [None], "PreToolUse": ["AskUserQuestion|mcp__reason-network__ask_user"],
+                          "PermissionRequest": [None]})
         self.assertEqual(self.ours(self.codex), {"SessionStart": [None], "PermissionRequest": [None]})
         self.assertEqual(self.init.read_text(), "x = 1\n")
         self.assertFalse((self.init.parent/"rex_agents.lua").exists())

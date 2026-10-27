@@ -6,7 +6,7 @@ Rex agents launches native interactive Claude Code and Codex workers into Rex sp
 
 - `rex-agents launch` opens a worker in an unfocused split beside the driver, with optional model and effort.
 - `rex-agents cleanup` closes the calling driver's workers.
-- A hook sends a driver-owned Claude worker's AskUserQuestion to its driver instead of the human. It pops up a Reason notification when a worker blocks on a permission prompt (Claude and Codex).
+- A hook sends a driver-owned Claude worker's AskUserQuestion or Reason `ask_user` to its driver instead of the human. It pops up a Reason notification when a worker blocks on a permission prompt (Claude and Codex).
 
 Find agents with `reason-network who` or MCP `list_team`. Message them with MCP `send_message`. Earlier versions also had `list`, `send`, `focus`, `navigation`, `doctor`, remote hosts, and Rex palette actions. Those are removed.
 
@@ -36,7 +36,7 @@ Owned launches alternate `right`, `below`, `right`, using the last launch direct
 ## Worker protocol
 
 1. The driver puts its own Reason address in the task. In a Claude shell, take the `is_me` row of `reason-network who --json`. In Codex, use MCP `list_team`; `reason-network` fails inside the Codex sandbox with `could not start the network daemon`.
-2. The worker reports by messaging that address with MCP `send_message`. It sends blocking human questions there instead of opening AskUserQuestion or `request_user_input`.
+2. The worker reports by messaging that address with MCP `send_message`. It sends blocking human questions there instead of opening AskUserQuestion, `request_user_input`, or Reason `ask_user`.
 3. The driver replies to the message's `from` with `reply_to`. It asks its human before answering a question meant for them.
 4. Delivered or queued does not mean the work finished. Wait for an explicit completion message.
 
@@ -63,7 +63,7 @@ rex-agents --session SESSION_ID --block BLOCK_ID launch \
   --name helper --cwd /absolute/project --model gpt-6.1-sol --task-file /tmp/task.txt
 ```
 
-Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. In a driver-owned worker, it refuses `AskUserQuestion` and tells the worker to send the question to its driver through Reason. For other blocking prompts in a worker pane, it sends the human a `--notify` message as the worker, and the prompt still waits in the pane. Codex model questions (`request_user_input`) have no hook; the task's rules are the only guard.
+Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. In a driver-owned Claude worker, it refuses `AskUserQuestion` and Reason `ask_user` and tells the worker to send the question to its driver through Reason. For other blocking prompts in a worker pane, it sends the human a `--notify` message as the worker, and the prompt still waits in the pane. Codex model questions (`request_user_input`) and Codex calls to Reason `ask_user` have no hook; the task's rules are the only guard.
 
 ## Install
 

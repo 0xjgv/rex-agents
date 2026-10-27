@@ -92,3 +92,14 @@ Still open:
 - Drivers and workers alike rename the shared Rex session when the Rex `SessionStart` hook asks them to name their work. Here the Codex driver and the `sol-plan` worker (`worker-startup-detection`) both renamed it.
 
 The suite has 33 tests.
+
+## Reason `ask_user` relay (2026-10-27)
+
+Reason's MCP `ask_user` pops a question up on the human's screen and waits, and `~/.claude/settings.json` allows it without a prompt. The Claude `PreToolUse` hook now matches `AskUserQuestion|mcp__reason-network__ask_user`.
+
+- `rex-agents install` changed only that matcher in `~/.claude/settings.json`. `~/.codex/hooks.json` stayed byte-identical, so Codex needs no re-trust.
+- A Haiku 5.5 worker (`relay-ask-user`, effort low) told to call `ask_user` was refused: `PreToolUse:mcp__reason-network__ask_user hook error: You are a rex-agents worker, and only your driver talks to the human. …`. It sent that text to its driver with `send_message`. `cleanup` closed it and exited 0.
+
+Fixture-only: a human-launched worker's `ask_user` passes untouched, since Reason pops it up itself. Codex workers have no hook for `ask_user`; only the task's rules stop them.
+
+The suite has 34 tests.
