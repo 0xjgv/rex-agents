@@ -149,3 +149,14 @@ When the user leaves the model or effort open and `EFFORT_ROUTER_DIR` is set, th
 - Re-run after `--exclude` replaced `--target`: the same task file returned `{"model": "sonnet", "effort": "medium", "tier": "routine", "harness": "claude"}` with `--exclude codex` and `gpt-6.1-terra` with `--exclude claude`. Excluding both exited 2. On six synthetic prompts, `--exclude codex` matched the old Claude picks and `--exclude claude` matched the tier router's Codex picks (commit `659fa10`). Evidence is in `.verification/routing-2026-10-27/exclude/`.
 
 Not verified live: a driver following the skill text on its own, a Codex driver routing with `--exclude claude`, and the router's fallback path when every scoring provider fails (covered by effort-router's tests). Terra's place in the routine tier is an inference from its predecessor's description, not a measured result.
+
+## Workers window label (2026-10-28)
+
+The first launch's `session.create` request now labels the workers session's window `workers of <driver session label>`. Workers rename their session when Rex's own `SessionStart` hook asks them to name their work, and that hook names only the session, so the tab keeps the driver's name.
+
+- Live before the change: session `standing-scan-remeasure` held one pane, `rex-agents:bc0347cbdf6e97b0:astra-measure2`, a Codex worker whose pane showed `Ran rex session rename session:01a182ac-… standing-scan-remeasure`. Its locator `bc0347cbdf6e97b0.json` pointed to the driver's pane in session `worker-session-identity`.
+- Live after the change, from a Claude driver pane in `worker-session-identity`, without reinstalling: one idle `claude-haiku-5-5` worker (`--effort low`, no task). `rex session inspect` showed session `worker-session-identity-workers` with one window, `workers of worker-session-identity`, holding `rex-agents:74dc4aa878fbf412:probe-winlabel`. `cleanup` closed it, exited 0, and the session was gone from `rex session ls`. Evidence is in `.verification/window-label-*`.
+
+Not verified: how prominently the Rex app shows window labels, and whether a worker given a task leaves the window label alone (the Rex hook text and the `/rex` skill rename tabs only on request). A driver that renames its session after launch leaves the window label stale.
+
+The suite has 37 tests.

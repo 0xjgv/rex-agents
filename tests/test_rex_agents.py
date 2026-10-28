@@ -171,6 +171,8 @@ class LaunchTests(Base):
         self.assertEqual(self.block(request)["options"]["path_prepend"], ["/caller/bin", "/usr/bin"])
         self.assertEqual(self.block(request)["label"], f"rex-agents:{ME}:w1")
         self.assertEqual(request["label"], "drive-workers")
+        # Workers rename their session when Rex's hook asks; the window label keeps the driver's name.
+        self.assertEqual(request["initial_windows"][0]["window_label"], "workers of drive")
         self.assertEqual(result["session_id"], list(self.app.sessions)[-1])
         self.launch("w2")
         self.assertEqual((self.app.splits()[-1]["focus"], self.app.splits()[-1]["side"]), (False, "after"))

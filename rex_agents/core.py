@@ -308,9 +308,11 @@ class Integration:
                                ratio=ratio, focus=False, layout=layout)
             else:
                 # The first worker opens a session of its own, so the driver's pane never splits.
+                # Workers may rename the session; the window label keeps the driver's name.
                 title = decode(self.rex("session", "inspect", driver["session"], "--json")).get("label") or "rex-agents"
                 method = "session.create"
-                request = dict(label=f"{title}-workers"[:128], initial_windows=[{"layout": layout}])
+                request = dict(label=f"{title}-workers"[:128],
+                               initial_windows=[{"window_label": f"workers of {title}"[:128], "layout": layout}])
             try:
                 result = decode(self.rex("api", "call", method, "-", stdin=json.dumps(request)))
             except Error as exc:
