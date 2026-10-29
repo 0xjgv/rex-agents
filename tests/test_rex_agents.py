@@ -37,7 +37,8 @@ class Fake(Integration):
     def __init__(self, cache, **kw):
         super().__init__(cache=cache, **kw)
         self.sessions, self.layouts, self.calls, self.requests, self.close, self.n = {}, {}, [], [], {}, 0
-        self.split_error, self.split_creates, self.down = None, True, False
+        self.split_error, self.split_creates, self.down, self.focused = None, True, False, None
+        self.edits = []  # session.move_block and session.resize_pane requests
         self.ghosts = []  # sessions `ls` reports that close before their block listing
 
     def add(self, session, label="shell", window="w1"):
@@ -52,13 +53,22 @@ class Fake(Integration):
             if self.layouts.get(session):
                 self.layouts[session] = prune(self.layouts[session], block)
 
-    def graft(self, node, anchor, split):
+    def graft(self, node, anchor, wrap):
         if core.node_id(node) == anchor:
-            return {"split": dict(split, before=node)}
+            return wrap(node)
         if not (old := node.get("split")):
             return node
-        return {"split": dict(old, before=self.graft(old["before"], anchor, split),
-                              after=self.graft(old["after"], anchor, split))}
+        return {"split": dict(old, before=self.graft(old["before"], anchor, wrap),
+                              after=self.graft(old["after"], anchor, wrap))}
+
+    def resize(self, node, request):
+        if not (split := node.get("split")):
+            return node
+        if (split["direction"] == request["direction"] and request["before_block_id"] in core.leaves(split["before"])
+                and request["after_block_id"] in core.leaves(split["after"])):
+            split = dict(split, ratio=request["ratio"])
+        return {"split": dict(split, before=self.resize(split["before"], request),
+                              after=self.resize(split["after"], request))}
 
     def labels(self):
         return [b["label"] for blocks in self.sessions.values() for b in blocks]
@@ -77,23 +87,11 @@ class Fake(Integration):
                 raise CommandError(f'session target "{args[3]}" not found')
             return json.dumps({"blocks": self.sessions[args[3]]})
         if args[:2] == ("window", "ls"):
-            return json.dumps({"windows": [{"window_id": "w1", "layers": [{"layout": self.layouts[args[3]]}]}]})
-        if args[:2] == ("session", "inspect"):
-            return json.dumps({"session_id": args[2], "label": "drive"})
+            return json.dumps({"windows": [{"window_id": "w1", "focused_block_id": self.focused,
+                                            "layers": [{"layout": self.layouts[args[3]]}]}]})
         if args[:2] == ("session", "kill"):
             del self.sessions[args[2]]
             return ""
-        if args == ("api", "call", "session.create", "-"):
-            request = json.loads(stdin)
-            self.requests.append(request)
-            session = f"session:{self.n + 1:04d}"
-            if self.split_creates:
-                block = self.add(session, request["initial_windows"][0]["layout"]["block"]["label"])
-                self.layouts[session] = {"block_id": block}
-            if self.split_error:
-                raise self.split_error
-            return json.dumps({"session_id": session, "initial_windows": [
-                {"window_id": "w1", "block_ids": [block], "revision": 1}]})
         if args == ("api", "call", "session.new_split", "-"):
             request = json.loads(stdin)
             self.requests.append(request)
@@ -102,11 +100,26 @@ class Fake(Integration):
                 block = self.add(session, request["layout"]["block"]["label"])
                 split = dict(split_id=f"split:{block[6:]}", direction=request["direction"], ratio=request["ratio"],
                              after={"block_id": block})
-                self.layouts[session] = self.graft(self.layouts[session], request["anchor_id"], split)
+                self.layouts[session] = self.graft(self.layouts[session], request["anchor_id"],
+                                                   lambda old: {"split": dict(split, before=old)})
             if self.split_error:
                 raise self.split_error
             return json.dumps({"anchor_id": request["anchor_id"], "block_ids": [block],
                                "split_ids": [split["split_id"]], "revision": self.n})
+        if args == ("api", "call", "session.move_block", "-"):
+            request = json.loads(stdin)
+            self.edits.append(("move", request))
+            session, block = request["session_id"], request["block_id"]
+            split = dict(split_id=f"split:m{block[6:]}", direction=request["direction"], ratio=0.5,
+                         before={"block_id": block})
+            self.layouts[session] = self.graft(prune(self.layouts[session], block), request["anchor_block_id"],
+                                               lambda old: {"split": dict(split, after=old)})
+            return json.dumps({"created_split_id": split["split_id"], "revision": self.n})
+        if args == ("api", "call", "session.resize_pane", "-"):
+            request = json.loads(stdin)
+            self.edits.append(("resize", request))
+            self.layouts[request["session_id"]] = self.resize(self.layouts[request["session_id"]], request)
+            return json.dumps({"revision": self.n})
         if args[:2] == ("block", "close"):
             session, block = args[3], args[4]
             mode = self.close.get(block)
@@ -138,6 +151,7 @@ class Base(unittest.TestCase):
         self.cwd.mkdir()
         self.app = Fake(self.tmp/"cache", server="unix:s", session="session:a")
         self.app.block = self.driver = self.app.add("session:a")
+        self.app.layouts["session:a"] = {"block_id": self.driver}
 
     def agent(self, kind="claude-code", native_id="drv"):
         os.environ["CODEX_THREAD_ID" if kind == "codex" else "CLAUDE_CODE_SESSION_ID"] = native_id
@@ -146,8 +160,8 @@ class Base(unittest.TestCase):
         return self.app.launch(name, str(self.cwd), model, **kw)
 
     def block(self, request):
-        """The new pane in a session.create or session.new_split request."""
-        return (request.get("layout") or request["initial_windows"][0]["layout"])["block"]
+        """The new pane in a session.new_split request."""
+        return request["layout"]["block"]
 
     def argv(self, request):
         return self.block(request)["options"]["command"]
@@ -164,18 +178,14 @@ class LaunchTests(Base):
         task = 'say "q" \'s\' $(id) `id` $HOME /a b/\n-- --model x'
         result = self.launch("w1", task=task, model="claude-opus-5-5", effort="xhigh")
         request = self.app.splits()[0]
-        self.assertEqual(self.app.calls[-1], ("api", "call", "session.create", "-"))
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_split", "-"))
         self.assertEqual(self.argv(request), ["/bin/agent", "--name", "w1", "--model", "claude-opus-5-5",
                                               "--effort", "xhigh", "--", task])
         self.assertEqual(self.block(request)["options"]["cwd"], str(self.cwd.resolve()))
         self.assertEqual(self.block(request)["options"]["path_prepend"], ["/caller/bin", "/usr/bin"])
         self.assertEqual(self.block(request)["label"], f"rex-agents:{ME}:w1")
-        self.assertEqual(request["label"], "drive-workers")
-        # Workers rename their session when Rex's hook asks; the window label keeps the driver's name.
-        self.assertEqual(request["initial_windows"][0]["window_label"], "workers of drive")
-        self.assertEqual(result["session_id"], list(self.app.sessions)[-1])
-        self.launch("w2")
-        self.assertEqual((self.app.splits()[-1]["focus"], self.app.splits()[-1]["side"]), (False, "after"))
+        self.assertEqual((request["session_id"], request["focus"], request["side"]), ("session:a", False, "after"))
+        self.assertEqual(result["session_id"], "session:a")
         self.assertEqual(result["registration"], "pending")
 
     def test_gpt_model_runs_codex(self):
@@ -243,8 +253,8 @@ class LaunchTests(Base):
         self.app.sessions["session:a"][0]["label"] = "rex-agents:-:parent"
         self.launch("w1")
         del os.environ["CLAUDE_CODE_SESSION_ID"]
-        self.launch("h1")  # a human in a `-` pane opens a session instead of splitting its own pane
-        self.assertIn("initial_windows", self.app.splits()[-1])
+        self.launch("h1")  # a human in a `-` pane splits its own pane
+        self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
 
     def test_explicit_block_does_not_escape_nesting_guard(self):
         self.agent()
@@ -264,46 +274,64 @@ class LaunchTests(Base):
         self.launch("w1")
         self.assertEqual(len(self.app.splits()), 1)
 
-    def test_workers_fill_columns_of_two_in_their_own_session(self):
+    def test_workers_fill_balanced_columns_beside_the_full_height_driver(self):
         self.agent()
-        first = self.launch("w1")
-        session, w1 = first["session_id"], first["block_ids"][0]
-        seen, made = [], []
-        for name in ("w2", "w3", "w4", "w5"):
-            result = self.launch(name)
-            self.assertEqual(result["session_id"], session)
+        seen, w, made = [], {}, {}
+        for n in range(1, 8):
+            result = self.launch(f"w{n}")
+            self.assertEqual(result["session_id"], "session:a")
             seen.append(self.placed())
-            made.append((result["block_ids"][0], result["split_ids"][0]))
-        (w2, column), (w3, workers), (w4, _), (w5, _) = made
-        self.assertEqual(seen, [(w1, "vertical", 0.5), (column, "horizontal", 0.5), (w3, "vertical", 0.5),
-                                (workers, "horizontal", 2 / 3)])
-        self.assertEqual(shape(self.app.layouts[session]), (
-            "horizontal", ("horizontal", ("vertical", w1, w2), ("vertical", w3, w4)), w5))
-        self.assertEqual([b["block_id"] for b in self.app.sessions["session:a"]], [self.driver])
-        w6 = self.launch("w6")["block_ids"][0]
-        self.assertEqual(self.placed()[:2], (w5, "vertical"))
-        self.app.drop(w6)
-        self.launch("w7")  # refills the gap w6 left
-        self.assertEqual(self.placed()[:2], (w5, "vertical"))
+            w[n], made[n] = result["block_ids"][0], result["split_ids"][0]
+            if n == 3:
+                self.assertEqual(shape(self.app.layouts["session:a"]),
+                                 ("horizontal", self.driver, ("vertical", ("vertical", w[1], w[2]), w[3])))
+                self.assertEqual(self.app.layouts["session:a"]["split"]["ratio"], 2 / 3)
+            if n == 4:  # 3 becomes 2+2, and the columns share half the tab
+                self.assertEqual(shape(self.app.layouts["session:a"]), ("horizontal", self.driver, (
+                    "horizontal", ("vertical", w[1], w[2]), ("vertical", w[3], w[4]))))
+                self.assertEqual(self.app.layouts["session:a"]["split"]["ratio"], 0.5)
+        self.assertEqual(seen, [(self.driver, "horizontal", 2 / 3), (w[1], "vertical", 1 / 2),
+                                (made[2], "vertical", 2 / 3), (made[3], "horizontal", 1 / 2),
+                                (made[2], "vertical", 2 / 3), (f"split:m{w[3][6:]}", "vertical", 2 / 3),
+                                (made[4], "horizontal", 2 / 3)])
+        self.assertEqual([(kind, r.get("block_id")) for kind, r in self.app.edits],
+                         [("move", w[3]), ("resize", None), ("move", w[6]), ("resize", None)])
+        layout = self.app.layouts["session:a"]
+        self.assertEqual(shape(layout), ("horizontal", self.driver, ("horizontal", (
+            "horizontal", ("vertical", ("vertical", w[1], w[2]), w[5]), ("vertical", w[3], w[4])),
+            ("vertical", w[6], w[7]))))  # 3+2+2
+        self.assertEqual((layout["split"]["ratio"], layout["split"]["after"]["split"]["ratio"]), (0.5, 2 / 3))
+        for block in w.values():
+            self.app.drop(block)
+        self.launch("w8")  # with every worker gone, the driver splits again
+        self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
 
-    def test_full_newest_column_opens_another_after_a_close(self):
+    def test_full_column_keeps_its_focused_worker(self):
         self.agent()
-        made = [self.launch(name)["block_ids"][0] for name in ("w1", "w2", "w3", "w4")]
-        self.app.drop(made[0])
-        workers = self.app.layouts[list(self.app.sessions)[-1]]
-        self.assertEqual(shape(workers), ("horizontal", made[1], ("vertical", made[2], made[3])))
-        self.launch("w5")  # three workers, but the newest column is full
-        self.assertEqual(self.placed(), (workers["split"]["split_id"], "horizontal", 2 / 3))
+        w = [self.launch(f"w{n}")["block_ids"][0] for n in range(1, 4)]
+        self.app.focused = w[2]
+        w4 = self.launch("w4")["block_ids"][0]
+        self.assertEqual(shape(self.app.layouts["session:a"]), ("horizontal", self.driver, (
+            "horizontal", ("vertical", w[0], w[2]), ("vertical", w[1], w4))))
 
-    def test_workers_join_the_session_of_the_newest_owned_pane(self):
+    def test_driver_beside_other_panes_splits_itself(self):
         self.agent()
-        old = self.app.add("session:b", f"rex-agents:{ME}:old")
-        self.app.layouts["session:b"] = {"block_id": old}
-        self.app.add("session:c", "rex-agents:feedfacefeedface:theirs")
-        self.assertEqual(self.launch("w1")["session_id"], "session:b")
-        self.assertEqual(self.placed(), (old, "vertical", 0.5))
+        shell, old = self.app.add("session:a"), self.app.add("session:a", f"rex-agents:{ME}:old")
+        self.app.layouts["session:a"] = {"split": dict(split_id="split:x", direction="horizontal", ratio=0.5,
+            before={"block_id": self.driver}, after={"split": dict(split_id="split:y", direction="vertical",
+            ratio=0.5, before={"block_id": shell}, after={"block_id": old})})}
+        self.launch("w1")
+        self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
 
-    def test_human_launch_fills_columns_too(self):
+    def test_workers_outside_the_driver_tab_are_ignored(self):
+        self.agent()
+        self.app.add("session:b", f"rex-agents:{ME}:old")
+        self.app.add("session:a", f"rex-agents:{ME}:other-tab", window="w2")
+        self.app.add("session:a", "rex-agents:feedfacefeedface:theirs")
+        self.assertEqual(self.launch("w1")["session_id"], "session:a")
+        self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
+
+    def test_human_launch_stacks_too(self):
         h1 = self.launch("h1")["block_ids"][0]
         self.launch("h2")
         self.assertEqual(self.placed(), (h1, "vertical", 0.5))
@@ -312,11 +340,10 @@ class LaunchTests(Base):
     def test_locator_supplies_pane_for_codex_shell(self):
         self.agent("codex", "cx")
         app = Fake(self.tmp/"cache")
-        app.sessions, app.n = self.app.sessions, self.app.n
+        app.sessions, app.layouts, app.n = self.app.sessions, self.app.layouts, self.app.n
         core.atomic(app.locator(("codex", "cx")), dict(server="unix:s", session="session:a", block=self.driver))
         app.launch("w1", str(self.cwd), "claude-opus-5-5")
-        self.assertIn(("session", "inspect", "session:a", "--json"), app.calls)
-        self.assertEqual(len(app.splits()), 1)
+        self.assertEqual([(r["session_id"], r["anchor_id"]) for r in app.splits()], [("session:a", self.driver)])
         os.environ["CODEX_THREAD_ID"] = "unknown"
         with self.assertRaisesRegex(Error, "--session and --block"):
             Fake(self.tmp/"cache").launch("w2", str(self.cwd), "claude-opus-5-5")
@@ -347,14 +374,16 @@ class CleanupTests(Base):
 
     def test_kills_only_the_sessions_it_emptied(self):
         self.agent()
-        workers = self.launch("w1")["session_id"]
+        self.launch("w1")
         self.launch("w2")
+        self.app.add("session:w", f"rex-agents:{ME}:old")  # a workers session from an earlier version
         self.app.add("session:b", f"rex-agents:{ME}:b")
         self.app.add("session:b", "shell")
         self.app.sessions["session:c"] = []  # already empty, holding no worker of ours
         self.app.cleanup()
-        self.assertEqual([c for c in self.app.calls if c[:2] == ("session", "kill")], [("session", "kill", workers)])
+        self.assertEqual([c for c in self.app.calls if c[:2] == ("session", "kill")], [("session", "kill", "session:w")])
         self.assertEqual(sorted(self.app.sessions), ["session:a", "session:b", "session:c"])
+        self.assertEqual(shape(self.app.layouts["session:a"]), self.driver)
 
     def test_uncertain_outcomes(self):
         self.agent()

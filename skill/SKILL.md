@@ -5,7 +5,7 @@ description: Work with other models as a team. Launch opus, fable, sonnet, haiku
 
 # Rex agents
 
-You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, in a workers session separate from yours. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
+You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, in columns on the right of your tab. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
 
 ## Pick model and effort
 
@@ -53,7 +53,7 @@ Every task states:
 
 1. Your Reason address. In Claude, take the `is_me` row of `reason-network who --json`. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
 2. The goal, files, constraints, and the shape of the answer you want.
-3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers and message no one else; say `DONE` when finished.
+3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished.
 
 Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
 

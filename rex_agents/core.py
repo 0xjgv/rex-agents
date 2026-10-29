@@ -109,10 +109,16 @@ def node_id(node):
     return node.get("block_id") or node["split"]["split_id"]
 
 
-def columns(node):
-    """Side-by-side parts of a Rex layout node."""
+def leaves(node):
+    """Block IDs under a Rex layout node, left to right and top to bottom."""
     split = node.get("split")
-    return columns(split["before"]) + columns(split["after"]) if split and split["direction"] == "horizontal" else 1
+    return leaves(split["before"]) + leaves(split["after"]) if split else [node["block_id"]]
+
+
+def columns(node):
+    """Side-by-side parts of a Rex layout node, left to right."""
+    split = node.get("split")
+    return columns(split["before"]) + columns(split["after"]) if split and split["direction"] == "horizontal" else [node]
 
 
 def parents(node, found=None):
@@ -237,19 +243,29 @@ class Integration:
             rows += [dict(row, session=name) for row in data["blocks"]]
         return sorted(rows, key=lambda row: row["block_id"])
 
-    def place(self, newest):
-        """(anchor, direction, ratio) for the next worker: below the newest one, or a new column once its column holds two."""
-        listing = decode(self.rex("window", "ls", "-s", newest["session"], "--json"))
+    def place(self, driver, mine):
+        """(anchor, direction, ratio, moved) for the next worker, in balanced columns of up to three on the driver's right."""
+        listing = decode(self.rex("window", "ls", "-s", driver["session"], "--json")) if mine else {"windows": []}
         try:
-            for window in listing["windows"]:
-                for layer in window["layers"] if window["window_id"] == newest.get("window_id") else ():
-                    column = parents(root := layer["layout"]).get(newest["block_id"])
-                    if column and column["direction"] == "vertical":
-                        # Open a column beside all the others, as wide as each of them.
-                        return node_id(root), "horizontal", columns(root) / (columns(root) + 1)
+            window = next((w for w in listing["windows"] if w["window_id"] == driver.get("window_id")), {})
+            tree = {}
+            for layer in window.get("layers", ()):
+                parents(layer["layout"], tree)
+            # The workers' area is what the driver's own split put on its right.
+            split = tree.get(driver["block_id"], {})
+            beside = split.get("direction") == "horizontal" and node_id(split["before"]) == driver["block_id"]
+            area = split["after"] if beside else None
+            if not area or not set(leaves(area)) <= {b["block_id"] for b in mine}:
+                return driver["block_id"], "horizontal", 2 / 3, None
+            stacks = columns(area)
+            column = min(stacks, key=lambda c: len(leaves(c)))  # the leftmost of the shortest
+            if (rows := len(leaves(column))) < 3:
+                return node_id(column), "vertical", rows / (rows + 1), None
+            # Every column is full: open one as wide as each, and move in the last column's lowest unfocused worker.
+            moved = next(b for b in reversed(leaves(stacks[-1])) if b != window.get("focused_block_id"))
+            return node_id(area), "horizontal", len(stacks) / (len(stacks) + 1), moved
         except (KeyError, TypeError) as exc:
             raise Error(f"Cannot place the worker in Rex's layout: missing {exc}") from exc
-        return newest["block_id"], "vertical", 0.5
 
     @contextlib.contextmanager
     def lock(self):
@@ -294,35 +310,33 @@ class Integration:
                 raise Error("Owned workers cannot launch nested workers")
             if any((worker := parse(b.get("label"))) and worker[1] == name for b in blocks):
                 raise Error(f"Worker {name} already has a Rex pane; close it before relaunching")
-            mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own]
+            mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
+                    and b["session"] == driver["session"] and b.get("window_id") == driver.get("window_id")]
             # The caller's PATH goes first, as `rex split` sends it.
             options = dict(command=argv, cwd=str(directory),
                            path_prepend=[p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
-            layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
-            if mine:
-                # `rex split` takes only a pane as anchor; the API also takes a split, which a new column needs.
-                newest = mine[-1]
-                anchor, direction, ratio = self.place(newest)
-                method = "session.new_split"
-                request = dict(session_id=newest["session"], anchor_id=anchor, direction=direction, side="after",
-                               ratio=ratio, focus=False, layout=layout)
-            else:
-                # The first worker opens a session of its own, so the driver's pane never splits.
-                # Workers may rename the session; the window label keeps the driver's name.
-                title = decode(self.rex("session", "inspect", driver["session"], "--json")).get("label") or "rex-agents"
-                method = "session.create"
-                request = dict(label=f"{title}-workers"[:128],
-                               initial_windows=[{"window_label": f"workers of {title}"[:128], "layout": layout}])
+            # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
+            anchor, direction, ratio, moved = self.place(driver, mine)
+            request = dict(session_id=driver["session"], anchor_id=anchor, direction=direction, side="after",
+                           ratio=ratio, focus=False, layout={"block": dict(flavor=TERMINAL, label=label, options=options)})
             try:
-                result = decode(self.rex("api", "call", method, "-", stdin=json.dumps(request)))
+                result = decode(self.rex("api", "call", "session.new_split", "-", stdin=json.dumps(request)))
             except Error as exc:
                 raise Error(f"Launch outcome uncertain for {name}: {exc}. "
                             f"A pane labeled {label} exists if Rex created it; a retry refuses while it does.") from exc
-            if mine:
-                result = dict(result, session_id=newest["session"])
-            else:
-                result = dict(session_id=result["session_id"], **result["initial_windows"][0])
-            return dict(result, name=name, label=label, registration="pending")
+            if moved:
+                # The new column takes a second worker, and the columns now share half the tab.
+                new = result["block_ids"][0]
+                steps = (("session.move_block", dict(block_id=moved, anchor_block_id=new, direction="vertical",
+                                                     side="before")),
+                         ("session.resize_pane", dict(direction="horizontal", before_block_id=driver["block_id"],
+                                                      after_block_id=new, ratio=0.5)))
+                try:
+                    for method, request in steps:
+                        self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=driver["session"])))
+                except Error as exc:
+                    raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
+            return dict(result, session_id=driver["session"], name=name, label=label, registration="pending")
 
     def cleanup(self):
         identity = native_identity()
@@ -361,7 +375,7 @@ class Integration:
                 if rows is None or item["block"] in {b["block_id"] for b in rows}:
                     result["closed"].remove(item)
                     result["uncertain"].append(dict(item, error=error))
-            # A workers session outlives its last pane; close the ones this cleanup emptied.
+            # A session outlives its last pane; close the ones this cleanup emptied.
             emptied = set() if rows is None else {i["session"] for i in result["closed"] + result["gone"]} - {
                 b["session"] for b in rows}
             for session in emptied:

@@ -160,3 +160,27 @@ The first launch's `session.create` request now labels the workers session's win
 Not verified: how prominently the Rex app shows window labels, and whether a worker given a task leaves the window label alone (the Rex hook text and the `/rex` skill rename tabs only on request). A driver that renames its session after launch leaves the window label stale.
 
 The suite has 37 tests.
+
+## Workers beside the driver (2026-10-29)
+
+Workers open in the driver's tab again, replacing the workers session. The first worker splits the driver's pane with ratio 2/3, so the driver keeps two thirds of the width and its full height. Each later worker goes after the top of the newest worker's column with ratio n/(n+1). Every launch calls `session.new_split` in the driver's session; `session.create` is no longer used. Owned panes in other windows or sessions do not affect placement. The skill's task rules now tell workers to leave the Rex session's name alone, because they share the driver's session.
+
+- Live run from a Claude driver pane alone in its tab, without reinstalling: three idle `claude-haiku-5-5` workers (`--effort low`, no task). All three reported the driver's `session_id`. Anchors: the driver, `probe-st1`, then the split holding `probe-st1` and `probe-st2`. `rex window ls --json` showed the driver at `[0, 0, 0.667, 1]` and the three workers at x 0.667, each 0.333 wide and 0.333 high. The driver window's `focused_block_id` stayed on the driver. The `probe-st3` pane showed `Haiku 5.5 with low effort`.
+- After `rex block close` on `probe-st2`, Rex gave its space to `probe-st1` and did not rebalance the column. `probe-st4` anchored on the column's top split with ratio 2/3 and got 0.333 of the height; `probe-st1` and `probe-st3` were left at 0.444 and 0.222.
+- `cleanup` closed `probe-st1`, `probe-st3`, and `probe-st4` with nothing uncertain. The driver's layout went back to `[0, 0, 1, 1]`, and the driver's session was not killed. Evidence is in `.verification/same-tab-2026-10-29/`.
+
+Not verified live: a worker given a task leaving the session name alone, human launches, a Codex driver, and a driver tab that already holds other panes. Fixture-only: owned panes in other tabs or sessions are ignored for placement; cleanup kills a workers session left by an earlier version once it empties it.
+
+The suite has 36 tests.
+
+## Balanced columns (2026-10-29)
+
+Columns now hold up to three workers, replacing the single column of the previous section. One column takes the right third; two or more share the right half. Each worker goes below the leftmost shortest column. When every column is full, the worker opens a new column after the workers' area with ratio c/(c+1), `session.move_block` moves the last column's lowest unfocused worker above it, and `session.resize_pane` sets the driver's border to 1/2.
+
+- Before the change, four idle `gpt-6.1-terra` workers (`--effort low`) stacked in one column at x 0.667, each 0.25 high. `cleanup` closed them with nothing uncertain.
+- Live after the change, from the same Claude driver pane, without reinstalling: seven idle `gpt-6.1-terra` workers (`--effort low`, no task). After four, `rex window ls --json` showed the driver at `[0, 0, 0.5, 1]`, `terra-1`/`terra-2` at x 0.5 and `terra-3`/`terra-4` at x 0.75, each 0.25 wide and 0.5 high. After seven: `terra-1`, `terra-2`, `terra-5` at x 0.5, each 0.333 high; `terra-3`/`terra-4` at x 0.667 and `terra-6`/`terra-7` at x 0.833, each 0.5 high; every column 0.167 wide.
+- In both snapshots, the driver window's `focused_block_id` was the driver, and the active window was another tab. The moved panes, `terra-3` and `terra-6`, still showed `GPT-6.1 Terra low` at an empty prompt. Evidence is in `.verification/columns-2026-10-29/`.
+
+Fixture-only: a focused worker is never the one moved; a driver whose right side holds another pane splits itself again; a failed move or resize after the split. Not verified live: placement after closes, ten or more workers, and Claude workers in this layout.
+
+The suite has 38 tests.
