@@ -20,13 +20,22 @@ You drive. Each worker is a native interactive Claude Code or Codex conversation
 | astra | `gpt-6-astra` | Codex |
 | luna | `gpt-6-luna` | Codex |
 
-The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use the model and effort the user names. Route whatever they leave open when `EFFORT_ROUTER_DIR` is set: write the task file, then score it for your own harness by excluding the other (`--exclude codex` in Claude Code, `--exclude claude` in Codex), or for the harness the user or a team role names:
+The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use the model and effort the user names. Route whatever they leave open by role when `EFFORT_ROUTER_DIR` is set: write the task file, pick the one role below that fits it, and run:
 
 ```sh
-python3 "$EFFORT_ROUTER_DIR/route.py" --exclude codex --json -- "$(cat /path/task.txt)"
+python3 "$EFFORT_ROUTER_DIR/route.py" --role implement --json -- "$(cat /path/task.txt)"
 ```
 
-It prints `{"model": ..., "effort": ..., "tier": ..., "harness": ...}`. Map a short name through the table, launch with that model and effort, and tell the user the tier and pick, such as "routed: hard → opus, high". The router sends the task text to its scoring service and can take up to half a minute when providers fail. Without `EFFORT_ROUTER_DIR`, or when the command fails, choose for the task yourself and tell the user what you chose. Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Use low or medium for lookups and routine edits, high or xhigh for plans, reviews, and hard bugs. Every worker gets a pane, even on your own harness; do not substitute a native subagent or another model.
+| Role | Fits |
+|---|---|
+| `implement` | Writing or changing code, including fixing a bug whose cause is unknown |
+| `validate` | Checking finished work for correctness: review, tests, verification |
+| `plan` | Designing the approach: structure outlines and implementation plans |
+| `advise` | Decisions, trade-offs, and second opinions |
+| `research` | Reading code or docs to answer questions with evidence, without changing anything |
+| `commit` | Commits, PR text, and other small mechanical tasks |
+
+A role may pick either harness. Pass `--exclude` only for `advise`, to exclude your own harness (`--exclude claude` in Claude Code, `--exclude codex` in Codex), or when the user names a harness, to exclude the other. It prints `{"model": ..., "effort": ..., "role": ..., "harness": ...}` without a network call. Map a short name through the table, launch with that model and effort, and tell the user the role and pick, such as "routed: plan → opus, xhigh". Without `EFFORT_ROUTER_DIR`, or when the command fails, choose for the task yourself and tell the user what you chose. Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Use medium for lookups and routine edits, high or xhigh for plans, reviews, and hard bugs. Every worker gets a pane, even on your own harness; do not substitute a native subagent or another model.
 
 ## Launch
 
