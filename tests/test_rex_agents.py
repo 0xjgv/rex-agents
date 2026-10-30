@@ -380,6 +380,18 @@ class CleanupTests(Base):
         self.assertEqual(self.app.cleanup(), dict(closed=[], gone=[], uncertain=[]))
         self.assertFalse([c for c in self.app.calls if c[:2] == ("session", "kill")])
 
+    def test_closes_one_named_worker(self):
+        self.agent()
+        self.launch("w1")
+        self.launch("w2")
+        other = self.app.add("session:b", "rex-agents:feedfacefeedface:w1")
+        result = self.app.cleanup(name="w1")
+        self.assertEqual([i["name"] for i in result["closed"]], ["w1"])
+        left = [b["label"] for blocks in self.app.sessions.values() for b in blocks]
+        self.assertIn(f"rex-agents:{ME}:w2", left)
+        self.assertIn(other, [b["block_id"] for blocks in self.app.sessions.values() for b in blocks])
+        self.assertEqual(self.app.cleanup(name="w1"), dict(closed=[], gone=[dict(name="w1")], uncertain=[]))
+
     def test_kills_only_the_sessions_it_emptied(self):
         self.agent()
         self.launch("w1")
@@ -439,6 +451,9 @@ class CleanupTests(Base):
             fake.cleanup.return_value = dict(closed=[], gone=[], uncertain=uncertain)
             with mock.patch.object(cli, "Integration", return_value=fake), mock.patch("sys.stdout"):
                 self.assertEqual(cli.main(["cleanup"]), code)
+                fake.cleanup.assert_called_with(name=None)
+                cli.main(["cleanup", "--name", "w1"])
+                fake.cleanup.assert_called_with(name="w1")
 
 
 class HookTests(Base):

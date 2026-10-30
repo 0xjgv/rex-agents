@@ -50,6 +50,8 @@ rex-agents cleanup
 
 Cleanup closes every pane labeled with the driver's owner, including unfinished workers. In-flight work is lost; native transcripts remain. It protects the driver pane and every unlabeled pane. It prints JSON with `closed`, `gone`, and `uncertain`, exits 0 when `uncertain` is empty, otherwise 1. Retrying is safe. Complete cleanup resets the next direction to `right`. Cleanup never closes human-launched panes (`rex-agents:-:<name>`). It also never closes panes from earlier versions, which carry `rex-agents:<uuid>` labels. Close those by hand.
 
+To stop one worker and keep the rest, run `rex-agents cleanup --name NAME`. It applies the same ownership rule to that one name. A name the driver does not own, or one already closed, comes back under `gone`.
+
 No Stop or SessionEnd hook runs cleanup. A driver crash leaves panes for manual closing. Claude `/clear` changes the driver's identity, so close older workers by hand.
 
 ## How it works

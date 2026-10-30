@@ -19,7 +19,8 @@ def parser():
     launch.add_argument("--task-file")
     launch.add_argument("--model", required=True, help="claude-* runs Claude Code; gpt-* runs Codex")
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
-    commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
+    cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
+    cleanup.add_argument("--name", help="Close only this owned worker")
     commands.add_parser("install")
     commands.add_parser("uninstall")
     hook = commands.add_parser("_hook", help=argparse.SUPPRESS)
@@ -37,7 +38,7 @@ def main(argv=None):
             task = Path(args.task_file).read_text() if args.task_file else None
             result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort)
         elif args.command == "cleanup":
-            result = app.cleanup()
+            result = app.cleanup(name=args.name)
             print(json.dumps(result, indent=2))
             return int(bool(result["uncertain"]))
         elif args.command in ("install", "uninstall"):

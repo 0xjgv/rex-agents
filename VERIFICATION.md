@@ -223,4 +223,18 @@ Evidence is in `.verification/subagent-routing-2026-10-30/`.
 
 Fixture-only: subagent permission prompts. The user's `defaultMode` is `auto`, which raised none. Not logged live: the `session_id` field of a Claude subagent's hook payload. The transcript evidence points to the parent's ID.
 
-The suite has 44 tests.
+The suite had 44 tests.
+
+## Field test and single-worker close (2026-10-30)
+
+A `gamma` driver (Claude Code 2.1.314, Opus) ran "how would you implement the linter?" through two rpi workers: `sol-linter` (`gpt-6.1-sol`, xhigh, Codex 0.166.0) and `sonnet-linter` (`claude-sonnet-5-5`, xhigh). Watched read-only from transcripts:
+
+- Both workers' SessionStart context carried `OWNER`.
+- Subagents nested two levels deep. Sol: Raman, Ptolemy, Singer, and Banach at depth 1, and Copernicus and Darwin under Ptolemy at depth 2. Codex v2 children reported to `/root` with its `send_message`. Sonnet: rpi pinned Opus and Fable stage agents at depth 1 and Sonnet analyzers at depth 2. The worker's model picks only its coordinator; `~/.claude/settings.json` also sets `CLAUDE_CODE_SUBAGENT_MODEL=opus`.
+- No subagent called `ask_user` or messaged the driver, and no pop-up reached the human. The Codex rpi (`~/.agents/skills/rpi`) has no design gate and returns choices through `needs_root`. Sol settled its choices from evidence and sent six progress reports.
+- Sonnet sent its rpi design gate (5 decisions) to the driver with `send_message`, as the task and `OWNER` said, a minute before the driver reminded it. The driver accepted all five without asking the human. `gamma`'s `_ROLES` now says approval gates always go to the human (not re-tested).
+- To stop sol alone, the driver used raw `rex block close`. For sonnet, the last worker, it used `cleanup`. After each close, no `codex --no-daemon` or `claude --name` worker process remained, so subagents died with their pane.
+
+Change: `cleanup --name NAME` closes one owned worker. Live with two `claude-haiku-5-5` workers: `--name drop-b` closed only `drop-b`; `--name nope` returned `gone: [{"name": "nope"}]`; plain `cleanup` closed `keep-a`. Evidence is in `.verification/cleanup-name-2026-10-30/run.txt`.
+
+The suite has 45 tests.

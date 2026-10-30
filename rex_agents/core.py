@@ -357,7 +357,7 @@ class Integration:
                     raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
             return dict(result, session_id=driver["session"], name=name, label=label, registration="pending")
 
-    def cleanup(self):
+    def cleanup(self, name=None):
         identity = native_identity()
         if not identity:
             raise Error("No native agent identity. Run cleanup from the driver conversation.")
@@ -368,9 +368,13 @@ class Integration:
         result = dict(closed=[], gone=[], uncertain=[])
         with self.lock():
             try:
-                owned = [(b, w) for b in self.panes() if (w := parse(b.get("label"))) and w[0] == me]
+                owned = [(b, w) for b in self.panes() if (w := parse(b.get("label"))) and w[0] == me
+                         and name in (None, w[1])]
             except Error as exc:
                 result["uncertain"].append(dict(error=f"Rex panes unavailable: {exc}"))
+                return result
+            if name and not owned:
+                result["gone"].append(dict(name=name))
                 return result
             for pane, worker in owned:
                 item = dict(name=worker[1], session=pane["session"], block=pane["block_id"])

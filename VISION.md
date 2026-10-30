@@ -33,7 +33,7 @@ Questions and results travel up. Answers travel back down the same path.
 4. **Pause, don't hold.** A blocked asker ends its turn and leaves a resume handle. No tool call blocks while it waits for a human.
 5. **Approvals stay where they happen.** A permission prompt waits in the pane that raised it, and a notification tells the human where it is. Reason cannot answer a pane prompt.
 6. **Native over built.** No daemon, SDK host, MCP server, or polling. Use what the harnesses and Reason already provide.
-7. **Every pane visible, every pane owned.** The human can watch and type into any task owner. Cleanup closes what the driver owns. In-process subagents should die with their pane (inferred, not yet verified).
+7. **Every pane visible, every pane owned.** The human can watch and type into any task owner. Cleanup closes what the driver owns, all at once or one worker by name. Subagents die with their pane (verified in both harnesses).
 
 ## Today
 
@@ -43,6 +43,8 @@ What works:
 - A task owner's own questions go to the driver. The hook denies AskUserQuestion and Reason `ask_user` with `RELAY`.
 - A task owner cannot launch panes. The nesting guard refuses: a Claude subagent shares its task owner's `REX_BLOCK`, and a Codex subagent has no locator.
 - Since Phase 1, an owned worker gets `OWNER` at SessionStart. A subagent's Reason `ask_user` is denied with `RETURN`, the subagent puts the question in its final reply, and the worker relays it and resumes the subagent. Both harnesses passed this live.
+
+- A field test (two rpi workers, sol and sonnet) nested subagents two levels deep in both harnesses with no leak to the human. The driver then approved a design gate itself, so `gamma`'s driver protocol now says approval gates always go to the human. Stopping one worker needed raw `rex block close`, so `cleanup --name NAME` now closes one owned worker.
 
 The gap Phase 1 closed: `hook()` used to return early on any payload carrying `agent_id`. A subagent's `ask_user` reached the human past the driver, and its permission prompts sent no notification.
 
@@ -175,7 +177,7 @@ Build it only if pane stalls prove to be the bottleneck.
 2. Claude: does PermissionRequest carry `agent_id` for subagents? The docs don't say. Either way, the prompt now reaches `alert()`. Not exercised live: auto mode raised no prompt.
 3. ~~Codex: does a subagent see `mcp__reason_network__ask_user`?~~ Yes, in Codex 0.166.0.
 4. ~~Does a subagent see the deny reason and act on it?~~ Yes, in both harnesses: each returned the question, and resuming it delivered the answer.
-5. Do foreground and background subagents die when their pane closes? This is inferred.
+5. ~~Do foreground and background subagents die when their pane closes?~~ Yes: after each pane closed, no worker process remained, in either harness.
 6. Codex v2 records subagent depth but may not enforce it (one user's reading of the code). Should the task template cap depth?
 7. Claude's Explore and Plan subagents cannot resume, so a question from one costs a fresh subagent. Is that acceptable?
 

@@ -57,7 +57,7 @@ For a team, launch one worker per role, each with its own name and task, and kee
 
 ## Close
 
-Save what must outlive the panes, then run `rex-agents cleanup` before your final answer. It closes every pane you own, unfinished work included, and never your own pane. It prints `closed`, `gone`, and `uncertain` JSON and exits 1 when anything is uncertain; retrying is safe. Claude `/clear` changes your identity, so close older workers by hand.
+Save what must outlive the panes, then run `rex-agents cleanup` before your final answer. It closes every pane you own, unfinished work included, and never your own pane. It prints `closed`, `gone`, and `uncertain` JSON and exits 1 when anything is uncertain; retrying is safe. To stop one worker and keep the rest, run `rex-agents cleanup --name NAME`; never close worker panes with `rex block close`, which skips the ownership check. Claude `/clear` changes your identity, so close older workers by hand.
 
 ## Trouble
 
