@@ -20,7 +20,7 @@ You drive. Each worker is a native interactive Claude Code or Codex conversation
 | astra | `gpt-6-astra` | Codex |
 | luna | `gpt-6-luna` | Codex |
 
-The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use any model, harness, or effort the user names. Fill what they leave open from the one role below that fits the task: take the first model in its preference order that fits the user's instructions, and the role's effort. For `advise`, use the harness other than yours unless the user says otherwise. A role may pick either harness. These are defaults, not measured rankings.
+The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use any model, harness, or effort the user names. Fill what they leave open from the one role below that fits the task: take the first model in its preference order that fits the user's instructions, and the role's effort. For `advise`, use the harness other than yours unless the user says otherwise. These are defaults, not measured rankings.
 
 | Role | Fits | Model preference | Effort |
 |---|---|---|---|
@@ -49,11 +49,11 @@ Every task states:
 
 1. Your Reason address. In Claude, take the `is_me` row of `~/.reason/bin/reason-network who --json`; `reason-network` is often not on PATH. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
 2. The goal, files, constraints, and the shape of the answer you want.
-3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished.
+3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished, with each command you ran and its exit code or output.
 
 Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
 
-For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Workers cannot launch workers, but each owns its task and may split it among its own native subagents; their questions reach you through the worker.
+For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Each worker owns its task and may split it among its own native subagents; their questions reach you through the worker.
 
 ## Close
 
