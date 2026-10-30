@@ -142,6 +142,8 @@ The suite has 37 tests.
 
 ## Routed model and effort (2026-10-27)
 
+Historical. Since 2026-10-30 the skill takes the model and effort from its own role table and no longer calls effort-router or reads `EFFORT_ROUTER_DIR`. The table matches `ROLES` in effort-router's `route.py` at commit `8991be8`. A driver following the table has not been verified live.
+
 When the user leaves the model or effort open and `EFFORT_ROUTER_DIR` is set, the skill routes the task file through effort-router's `route.py --exclude <other harness> --json -- "$(cat task)"`. The router now scores four tiers (judgment, hard, routine, trivial) and four efforts, the same eight definitions for every harness, and maps the tier to the first model whose harness the caller did not exclude. The skill table gained `haiku` and `luna`. rex-agents code is unchanged.
 
 - Live run from a Claude driver pane, before `--exclude` replaced `--target`: a synthetic two-line task file whose lines start with `- ` scored through Respan in about 1 second for each target. `--target claude` returned `{"model": "sonnet", "effort": "medium", "tier": "routine"}`; `--target codex` returned `gpt-6.1-terra`, `medium`, `routine`. The `--` kept the leading `-` from being read as an option.
