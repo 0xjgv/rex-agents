@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import os
@@ -214,6 +215,13 @@ class LaunchTests(Base):
                 cli.main(argv)
             self.assertEqual(cli.main([*argv, "--model", "gpt-6-astra"]), 0)
         self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-m", "gpt-6-astra"])
+
+    def test_cli_launch_defaults_cwd_to_current_directory(self):
+        self.agent()
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"), \
+                contextlib.chdir(self.cwd):
+            self.assertEqual(cli.main(["launch", "--name", "w1", "--model", "gpt-6-astra"]), 0)
+        self.assertEqual(self.block(self.app.splits()[0])["options"]["cwd"], str(self.cwd.resolve()))
 
     def test_duplicate_name_refused_for_any_owner_and_session(self):
         self.agent()

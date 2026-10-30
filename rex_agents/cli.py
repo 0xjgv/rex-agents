@@ -15,7 +15,7 @@ def parser():
     commands = p.add_subparsers(dest="command", required=True)
     launch = commands.add_parser("launch")
     launch.add_argument("--name", required=True)
-    launch.add_argument("--cwd", required=True)
+    launch.add_argument("--cwd", default=".", help="Worker directory; defaults to the current one")
     launch.add_argument("--task-file")
     launch.add_argument("--model", required=True, help="claude-* runs Claude Code; gpt-* runs Codex")
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
