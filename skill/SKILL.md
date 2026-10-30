@@ -61,7 +61,7 @@ Save what must outlive the panes, then run `rex-agents cleanup` before your fina
 
 ## Trouble
 
-- A Claude worker's AskUserQuestion or Reason `ask_user` is refused by a hook that tells it to message you. Codex workers have no such hook; only the task's rules stop them.
+- A worker's Reason `ask_user`, or a Claude worker's AskUserQuestion, is refused by a hook that tells it to message you. Codex `request_user_input` has no hook; only the task's rules stop it.
 - A worker blocked on a permission prompt pops up a Reason notification to the human. The prompt still waits in its pane.
 - `No Rex pane known for this conversation`: pass `--session` and `--block` as top-level options, before the subcommand: `rex-agents --session "$REX_SESSION" --block "$REX_BLOCK" launch …`. After `launch` they are rejected as unrecognized arguments.
 - `Owned workers cannot launch nested workers`: you are a worker. Message your driver instead.

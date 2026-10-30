@@ -186,3 +186,22 @@ Columns now hold up to three workers, replacing the single column of the previou
 Fixture-only: a focused worker is never the one moved; a driver whose right side holds another pane splits itself again; a failed move or resize after the split. Not verified live: placement after closes, ten or more workers, and Claude workers in this layout.
 
 The suite has 38 tests.
+
+## Codex `ask_user` relay (2026-10-30)
+
+Codex 0.166.0 now gets the `PreToolUse` hook for Reason's `ask_user`. Codex names the tool `mcp__reason_network__ask_user`: the server's hyphen becomes an underscore. `ASK_USER` holds each harness's name, and `alert()` checks the one for the hook's harness.
+
+- First try, with the matcher `mcp__reason-network__ask_user`: after the user trusted the new hook, a `gpt-6.1-terra` worker (`--effort medium`, launched without `--cwd`) called `ask_user` from Codex's `exec` code mode. The hook did not fire, and the human got the pop-up. The rollout shows the tool listed as `mcp__reason_network__ask_user`.
+- With the matcher `mcp__reason_network__ask_user` and a second trust: the same task's `ask_user` call was refused before it ran, with `Tool call blocked by PreToolUse hook: You are a rex-agents worker, and only your driver talks to the human. …`. The worker sent that text to its driver with `send_message`. So `PreToolUse` fires for MCP calls made inside `exec`. `cleanup` closed both workers with nothing uncertain.
+- The pane opened in `~/Code/rex-agents`, the caller's directory, so the `--cwd` default works live.
+- Both workers ran `rex session rename` despite the task's rule to leave the session's name alone. The second retried with the explicit session ID and renamed the driver's session to `rex-hook-test`. Rex's SessionStart hook tells every agent to name the session, and that hook context outranked the rule in the task.
+- `rex-agents install` rewrote non-ASCII characters in `~/.claude/settings.json` as `\u` escapes without changing its JSON; the original bytes were restored by hand.
+
+Fixes: in a worker pane, our `SessionStart` hook now returns `KEEP_NAME` as `additionalContext`. The hook command is unchanged, so Codex asked for no re-trust. `atomic()` writes UTF-8 with `ensure_ascii=False`, and `read()` reads UTF-8.
+
+- After reinstalling, `~/.claude/settings.json` was byte-identical to its copy from before the install, and `~/.codex/hooks.json` was unchanged.
+- A `gpt-6.1-terra` worker and a `claude-haiku-5-5` worker (`--effort low`) ran a small counting task with the usual rules. Both transcripts contain `KEEP_NAME`. Neither made a rename call: the Codex rollout holds two tool calls, `rg` and `send_message`. The driver's session kept the label `explain-rex-agents`. `cleanup` closed both workers with nothing uncertain. Evidence is in `.verification/codex-ask-user-2026-10-30/`.
+
+Fixture-only: a human-launched Codex worker's `ask_user` passes untouched. Not verified live: Codex `request_user_input`, which Codex offers only in Plan mode. The rename result is one run per harness: the hook context instructs the model, and no code blocks `rex session rename`.
+
+The suite has 41 tests.

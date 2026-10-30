@@ -8,9 +8,10 @@ import time
 from .core import ASK_USER, CLI, ROOT, Error, atomic, read
 
 # SessionStart records the pane for drivers whose tool shells lose REX_*; the rest alert on
-# prompts that block a launched worker. Codex has no hook for its model's questions.
-EVENTS = {"claude-code": {"SessionStart": None, "PreToolUse": "AskUserQuestion|" + ASK_USER, "PermissionRequest": None},
-          "codex": {"SessionStart": None, "PermissionRequest": None}}
+# prompts that block a launched worker. Codex has no hook for request_user_input, which only Plan mode offers.
+EVENTS = {"claude-code": {"SessionStart": None, "PreToolUse": "AskUserQuestion|" + ASK_USER["claude-code"],
+                          "PermissionRequest": None},
+          "codex": {"SessionStart": None, "PreToolUse": ASK_USER["codex"], "PermissionRequest": None}}
 # Earlier versions installed Rex palette actions through this line and module.
 LEGACY_MARKER = 'require("rex_agents") -- rex-agents managed\n'
 

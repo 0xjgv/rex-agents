@@ -464,6 +464,16 @@ class HookTests(Base):
         self.app.hook("claude-code", "SessionStart", {"session_id": "s1"})
         self.assertEqual(self.locator(), dict(server="unix:s", session="session:a", block=self.app.block))
 
+    def test_session_start_tells_workers_to_keep_session_name(self):
+        for kind, label in (("codex", "rex-agents:feedfacefeedface:helper"), ("claude-code", "rex-agents:-:helper")):
+            self.app.sessions["session:a"][-1]["label"] = label
+            context = self.app.hook(kind, "SessionStart", {"session_id": "s1"})["hookSpecificOutput"]
+            self.assertEqual(context["hookEventName"], "SessionStart")
+            self.assertIn("rex session rename", context["additionalContext"])
+        self.app.sessions["session:a"][-1]["label"] = "shell"
+        self.assertIsNone(self.app.hook("claude-code", "SessionStart", {"session_id": "s1"}))
+        self.assertEqual(self.locator(), dict(server="unix:s", session="session:a", block=self.app.block))
+
     def test_session_start_skips_children_and_missing_context(self):
         self.app.hook("claude-code", "SessionStart", {"session_id": "s1", "agent_id": "sub"})
         Fake(self.tmp/"cache").hook("claude-code", "SessionStart", {"session_id": "s1"})
@@ -485,8 +495,9 @@ class HookTests(Base):
         self.assertIn("rm -rf build", stdin)
 
     def test_owned_worker_question_goes_to_driver(self):
-        for tool in ("AskUserQuestion", "mcp__reason-network__ask_user"):
-            result = self.app.hook("claude-code", "PreToolUse", {"session_id": "s1", "tool_name": tool,
+        for kind, tool in (("claude-code", "AskUserQuestion"), ("claude-code", "mcp__reason-network__ask_user"),
+                           ("codex", "mcp__reason_network__ask_user")):
+            result = self.app.hook(kind, "PreToolUse", {"session_id": "s1", "tool_name": tool,
                                    "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}]}]}})
             decision = result["hookSpecificOutput"]
             self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
@@ -502,8 +513,9 @@ class HookTests(Base):
 
     def test_human_launched_worker_reason_question_is_left_to_reason(self):
         self.app.sessions["session:a"][-1]["label"] = "rex-agents:-:helper"
-        self.assertIsNone(self.app.hook("claude-code", "PreToolUse", {"session_id": "s1",
-                          "tool_name": "mcp__reason-network__ask_user", "tool_input": {"question": "Ship?"}}))
+        for kind, tool in (("claude-code", "mcp__reason-network__ask_user"), ("codex", "mcp__reason_network__ask_user")):
+            self.assertIsNone(self.app.hook(kind, "PreToolUse", {"session_id": "s1", "tool_name": tool,
+                                                                 "tool_input": {"question": "Ship?"}}))
         self.assertEqual(self.sent, [])
 
     def test_cli_prints_hook_decision(self):
@@ -552,6 +564,11 @@ class InstallTests(Base):
         return {event: [g.get("matcher") for g in groups for h in g["hooks"] if h["command"].startswith(str(CLI))]
                 for event, groups in document.get("hooks", {}).items()} if document else {}
 
+    def test_install_keeps_non_ascii_text(self):
+        core.atomic(self.claude, {"note": "a — b"})
+        install.install(self.home)
+        self.assertIn("a — b", self.claude.read_text(encoding="utf-8"))
+
     def test_install_migrates_and_is_idempotent(self):
         install.install(self.home)
         first = (self.claude.read_text(), self.codex.read_text())
@@ -564,7 +581,8 @@ class InstallTests(Base):
         self.assertEqual({k: v for k, v in self.ours(self.claude).items() if v},
                          {"SessionStart": [None], "PreToolUse": ["AskUserQuestion|mcp__reason-network__ask_user"],
                           "PermissionRequest": [None]})
-        self.assertEqual(self.ours(self.codex), {"SessionStart": [None], "PermissionRequest": [None]})
+        self.assertEqual(self.ours(self.codex), {"SessionStart": [None], "PreToolUse": ["mcp__reason_network__ask_user"],
+                                                 "PermissionRequest": [None]})
         self.assertEqual(self.init.read_text(), "x = 1\n")
         self.assertFalse((self.init.parent/"rex_agents.lua").exists())
         self.assertEqual((self.home/".local/bin/rex-agents").resolve(), CLI.resolve())
