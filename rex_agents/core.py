@@ -88,6 +88,45 @@ def read(path, default=None):
         raise Error(f"Cannot read {path}: {exc}") from exc
 
 
+def working_directory(cwd):
+    directory = Path(cwd).expanduser().resolve()
+    if not directory.is_dir():
+        raise Error(f"Working directory does not exist: {directory}")
+    if hasattr(fcntl, "F_GETPATH"):
+        # macOS resolve() keeps typed case; a new process's cwd uses the on-disk case.
+        fd = os.open(directory, os.O_RDONLY)
+        try:
+            directory = Path(os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024).split(b"\0", 1)[0]))
+        finally:
+            os.close(fd)
+    return directory
+
+
+def trust_claude(directory):
+    # Claude re-reads under its mkdir/heartbeat lock; this atomic write can still race an in-flight save.
+    path = Path.home()/".claude.json"
+    try:
+        text = path.read_text(encoding="utf-8")
+        config = json.loads(text)
+    except FileNotFoundError:
+        config = {}
+    except (ValueError, OSError) as exc:
+        raise Error(f"Cannot read {path}: {exc}") from exc
+    if not isinstance(config, dict) or not isinstance(config.get("projects", {}), dict):
+        raise Error(f"Invalid Claude configuration in {path}: expected objects")
+    project = config.setdefault("projects", {}).setdefault(str(directory), {})
+    if not isinstance(project, dict):
+        raise Error(f"Invalid Claude project configuration in {path}: expected an object")
+    if project.get("hasTrustDialogAccepted") is True:
+        return
+    project["hasTrustDialogAccepted"] = True
+    value = json.dumps(config, indent=2, ensure_ascii=False)
+    try:
+        atomic(path, value)
+    except OSError as exc:
+        raise Error(f"Cannot write {path}: {exc}") from exc
+
+
 def native_identity():
     """The calling agent conversation as (kind, id), or None for a human shell."""
     codex = os.environ.get("CODEX_THREAD_ID")
@@ -302,9 +341,7 @@ class Integration:
         kind = next((k for prefix, k in HARNESS.items() if model.startswith(prefix)), None)
         if not kind:
             raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
-        directory = Path(cwd).expanduser().resolve()
-        if not directory.is_dir():
-            raise Error(f"Working directory does not exist: {directory}")
+        directory = working_directory(cwd)
         # The pane runs the login shell's environment, which may lack the caller's PATH.
         executable = shutil.which(kind)
         if not executable:
@@ -314,6 +351,9 @@ class Integration:
         self.where(identity)
         own = self.own(identity)
         argv = [executable, "--name", name] if kind == "claude" else [executable, "--no-daemon"]
+        if kind == "codex":
+            # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
+            argv += ["-c", "projects={" + json.dumps(str(directory), ensure_ascii=False) + '={trust_level="trusted"}}']
         argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
@@ -329,6 +369,8 @@ class Integration:
                 raise Error("Owned workers cannot launch nested workers")
             if any((worker := parse(b.get("label"))) and worker[1] == name for b in blocks):
                 raise Error(f"Worker {name} already has a Rex pane; close it before relaunching")
+            if kind == "claude":
+                trust_claude(directory)
             mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
                     and b["session"] == driver["session"] and b.get("window_id") == driver.get("window_id")]
             # The caller's PATH goes first, as `rex split` sends it.

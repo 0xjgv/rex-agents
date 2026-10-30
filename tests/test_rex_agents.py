@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -193,7 +194,78 @@ class LaunchTests(Base):
         self.agent()
         self.launch("w1", model="gpt-6.1-sol", effort="high")
         self.assertEqual(self.argv(self.app.splits()[0]),
-                         ["/bin/agent", "--no-daemon", "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'])
+                         ["/bin/agent", "--no-daemon", "-c",
+                          f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}',
+                          "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'])
+
+    def test_codex_trust_quotes_directory_as_a_toml_key(self):
+        self.cwd = self.tmp/'work space.and "quotes" \\ 雪😀'
+        self.cwd.mkdir()
+        self.launch("w1", model="gpt-6.1-sol")
+        block = self.block(self.app.splits()[0])
+        argv = block["options"]["command"]
+        self.assertEqual(tomllib.loads(argv[argv.index("-c") + 1]),
+                         {"projects": {block["options"]["cwd"]: {"trust_level": "trusted"}}})
+        self.assertFalse((self.home/".claude.json").exists())
+        self.assertFalse((self.home/".codex").exists())
+
+    def test_claude_trust_creates_missing_config_before_split(self):
+        path = self.home/".claude.json"
+        with mock.patch.object(core.os, "replace", wraps=os.replace) as replace:
+            self.launch("w1")
+        cwd = self.block(self.app.splits()[0])["options"]["cwd"]
+        self.assertEqual(json.loads(path.read_text()), {"projects": {cwd: {"hasTrustDialogAccepted": True}}})
+        source, target = replace.call_args.args
+        self.assertEqual((Path(source).parent, target), (self.home, path))
+        self.assertFalse(Path(source).exists())
+
+    def test_claude_trust_preserves_other_keys(self):
+        path = self.home/".claude.json"
+        for i, (indent, separators, ending) in enumerate(((4, None, "\n"), ("\t", None, ""),
+                                                         (None, (",", ":"), ""))):
+            with self.subTest(indent=indent):
+                config = {"theme": "雪", "projects": {
+                    str(self.cwd.resolve()): {"allowedTools": ["Read"], "hasTrustDialogAccepted": False},
+                    "/other": {"hasTrustDialogAccepted": True, "other": 7}}, "another": {"key": [1, None]}}
+                path.write_text(json.dumps(config, indent=indent, separators=separators, ensure_ascii=False) + ending)
+                self.launch(f"w{i}")
+                config["projects"][str(self.cwd.resolve())]["hasTrustDialogAccepted"] = True
+                self.assertEqual(json.loads(path.read_text()), config)
+
+    def test_claude_trust_is_noop_when_already_accepted(self):
+        path = self.home/".claude.json"
+        value = json.dumps({"projects": {str(self.cwd.resolve()): {"hasTrustDialogAccepted": True}}}, indent=4)
+        path.write_text(value)
+        with mock.patch.object(core, "atomic") as write:
+            self.launch("w1")
+        write.assert_not_called()
+        self.assertEqual(path.read_text(), value)
+
+    def test_claude_trust_refuses_invalid_config_without_launching(self):
+        path = self.home/".claude.json"
+        for value in ('{', '[]', '{"projects":[]}', '{"projects":{"' + str(self.cwd.resolve()) + '":[]}}'):
+            with self.subTest(value=value):
+                path.write_text(value)
+                with self.assertRaises(Error):
+                    self.launch("w1")
+                self.assertEqual(path.read_text(), value)
+        self.assertEqual(self.app.splits(), [])
+
+    @unittest.skipUnless(hasattr(core.fcntl, "F_GETPATH"), "macOS directory casing")
+    def test_launch_uses_on_disk_case_for_cwd_and_both_trust_keys(self):
+        self.cwd = self.tmp/"MixedCase"
+        self.cwd.mkdir()
+        typed = self.cwd.with_name("mixedcase")
+        if not typed.is_dir():
+            self.skipTest("case-sensitive filesystem")
+        for name, model in (("claude", "claude-opus-5-5"), ("codex", "gpt-6.1-sol")):
+            self.app.launch(name, str(typed), model)
+            self.assertEqual(self.block(self.app.splits()[-1])["options"]["cwd"], str(self.cwd.resolve()))
+        config = json.loads((self.home/".claude.json").read_text())
+        self.assertEqual(config["projects"], {str(self.cwd.resolve()): {"hasTrustDialogAccepted": True}})
+        argv = self.argv(self.app.splits()[-1])
+        self.assertEqual(tomllib.loads(argv[argv.index("-c") + 1]),
+                         {"projects": {str(self.cwd.resolve()): {"trust_level": "trusted"}}})
 
     def test_invalid_input_rejected_before_rex(self):
         self.agent()
@@ -214,7 +286,8 @@ class LaunchTests(Base):
             with self.assertRaises(SystemExit):
                 cli.main(argv)
             self.assertEqual(cli.main([*argv, "--model", "gpt-6-astra"]), 0)
-        self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-m", "gpt-6-astra"])
+        self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-c",
+                         f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}', "-m", "gpt-6-astra"])
 
     def test_cli_launch_defaults_cwd_to_current_directory(self):
         self.agent()

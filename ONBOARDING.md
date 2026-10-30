@@ -87,7 +87,9 @@ Install adds CLI and skill symlinks into this checkout and its own hook entries.
 
 **`Launch outcome uncertain`:** Rex may have created the pane. Look for its label with `rex block ls --json`. A retry refuses while the labeled pane exists. If the split timed out locally, Rex may still be creating the pane, so wait a few seconds and check again before retrying.
 
-**A worker seems stuck:** it may wait on workspace trust, hook trust, login, or a prompt. Select its pane and look.
+Launch trusts the worker's directory before opening its pane. Codex gets an invocation-only config override; Claude records `hasTrustDialogAccepted` in `~/.claude.json`.
+
+**A worker seems stuck:** it may wait on hook trust, login, or a prompt. Select its pane and look.
 
 ## Remove
 
