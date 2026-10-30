@@ -35,7 +35,7 @@ Workers open in the driver's tab, in balanced columns of up to three on its righ
 
 ## Worker protocol
 
-1. The driver puts its own Reason address in the task. In a Claude shell, take the `is_me` row of `reason-network who --json`. In Codex, use MCP `list_team`; `reason-network` fails inside the Codex sandbox with `could not start the network daemon`.
+1. The driver puts its own Reason address in the task. In a Claude shell, take the `is_me` row of `~/.reason/bin/reason-network who --json`; `reason-network` may not be on PATH. In Codex, use MCP `list_team`; `reason-network` fails inside the Codex sandbox with `could not start the network daemon`.
 2. The worker reports by messaging that address with MCP `send_message`. It sends blocking human questions there instead of opening AskUserQuestion, `request_user_input`, or Reason `ask_user`.
 3. The driver replies to the message's `from` with `reply_to`. It asks its human before answering a question meant for them.
 4. Delivered or queued does not mean the work finished. Wait for an explicit completion message.

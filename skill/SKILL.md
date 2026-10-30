@@ -47,7 +47,7 @@ Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is pa
 
 Every task states:
 
-1. Your Reason address. In Claude, take the `is_me` row of `reason-network who --json`. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
+1. Your Reason address. In Claude, take the `is_me` row of `~/.reason/bin/reason-network who --json`; `reason-network` is often not on PATH. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
 2. The goal, files, constraints, and the shape of the answer you want.
 3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished.
 
