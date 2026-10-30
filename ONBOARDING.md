@@ -63,7 +63,7 @@ rex-agents --session SESSION_ID --block BLOCK_ID launch \
   --name helper --cwd /absolute/project --model gpt-6.1-sol --task-file /tmp/task.txt
 ```
 
-Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. In a driver-owned worker, it refuses Reason `ask_user`, and in Claude also `AskUserQuestion`, and tells the worker to send the question to its driver through Reason. For other blocking prompts in a worker pane, it sends the human a `--notify` message as the worker, and the prompt still waits in the pane. Codex `request_user_input` has no hook, and Codex offers it only in Plan mode; the task's rules are the only guard.
+Codex workers start with `--no-daemon`, because the shared app server drops the Rex environment before hooks run. The blocking-prompt hook reads its own pane label. In a driver-owned worker, it refuses Reason `ask_user`, and in Claude also `AskUserQuestion`, and tells the worker to send the question to its driver through Reason. A native subagent cannot receive a Reason reply, so the hook tells it to put the question in its final reply instead, and its worker relays it. A driver-owned worker also gets the owner protocol at SessionStart: it owns its task and may use native subagents freely. For other blocking prompts in a worker pane, subagents' included, it sends the human a `--notify` message as the worker, and the prompt still waits in the pane. Codex `request_user_input` has no hook, and Codex offers it only in Plan mode; the task's rules are the only guard.
 
 ## Install
 

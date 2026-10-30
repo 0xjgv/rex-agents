@@ -53,7 +53,7 @@ Every task states:
 
 Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
 
-For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Workers cannot launch workers.
+For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Workers cannot launch workers, but each owns its task and may split it among its own native subagents; their questions reach you through the worker.
 
 ## Close
 
@@ -61,7 +61,7 @@ Save what must outlive the panes, then run `rex-agents cleanup` before your fina
 
 ## Trouble
 
-- A worker's Reason `ask_user`, or a Claude worker's AskUserQuestion, is refused by a hook that tells it to message you. Codex `request_user_input` has no hook; only the task's rules stop it.
+- A worker's Reason `ask_user`, or a Claude worker's AskUserQuestion, is refused by a hook that tells it to message you. A subagent's `ask_user` is refused too, and the subagent returns the question to its worker. Codex `request_user_input` has no hook; only the task's rules stop it.
 - A worker blocked on a permission prompt pops up a Reason notification to the human. The prompt still waits in its pane.
 - `No Rex pane known for this conversation`: pass `--session` and `--block` as top-level options, before the subcommand: `rex-agents --session "$REX_SESSION" --block "$REX_BLOCK" launch …`. After `launch` they are rejected as unrecognized arguments.
 - `Owned workers cannot launch nested workers`: you are a worker. Message your driver instead.

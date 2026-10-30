@@ -474,6 +474,14 @@ class HookTests(Base):
         self.assertIsNone(self.app.hook("claude-code", "SessionStart", {"session_id": "s1"}))
         self.assertEqual(self.locator(), dict(server="unix:s", session="session:a", block=self.app.block))
 
+    def test_session_start_gives_owned_workers_the_owner_protocol(self):
+        context = self.app.hook("codex", "SessionStart", {"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("subagents", context)
+        self.assertIn("final reply", context)
+        self.app.sessions["session:a"][-1]["label"] = "rex-agents:-:helper"
+        context = self.app.hook("codex", "SessionStart", {"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("subagents", context)
+
     def test_session_start_skips_children_and_missing_context(self):
         self.app.hook("claude-code", "SessionStart", {"session_id": "s1", "agent_id": "sub"})
         Fake(self.tmp/"cache").hook("claude-code", "SessionStart", {"session_id": "s1"})
@@ -502,6 +510,25 @@ class HookTests(Base):
             decision = result["hookSpecificOutput"]
             self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
             self.assertIn("send_message", decision["permissionDecisionReason"])
+        self.assertEqual(self.sent, [])
+
+    def test_subagent_question_returns_to_task_owner(self):
+        for kind, tool in (("claude-code", "mcp__reason-network__ask_user"), ("codex", "mcp__reason_network__ask_user")):
+            result = self.app.hook(kind, "PreToolUse", {"session_id": "s1", "agent_id": "sub", "tool_name": tool,
+                                                        "tool_input": {"question": "Ship?"}})
+            decision = result["hookSpecificOutput"]
+            self.assertEqual(decision["permissionDecision"], "deny")
+            self.assertIn("final reply", decision["permissionDecisionReason"])
+            self.assertNotIn("send_message", decision["permissionDecisionReason"])
+        self.assertEqual(self.sent, [])
+
+    def test_subagent_permission_prompt_alerts_human(self):
+        self.app.hook("codex", "PermissionRequest",
+                      {"session_id": "s1", "agent_id": "sub", "tool_name": "Bash", "tool_input": {"command": "make"}})
+        self.assertEqual(self.sent[-1][0], ["send", "juan", "--notify", "--from", "codex:s1"])
+        self.sent.clear()
+        os.environ["CODEX_THREAD_ID"] = "cx"
+        self.app.hook("claude-code", "PermissionRequest", {"session_id": "s1", "tool_name": "Bash"})
         self.assertEqual(self.sent, [])
 
     def test_human_launched_worker_question_alerts_human(self):

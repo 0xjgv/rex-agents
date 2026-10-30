@@ -204,4 +204,23 @@ Fixes: in a worker pane, our `SessionStart` hook now returns `KEEP_NAME` as `add
 
 Fixture-only: a human-launched Codex worker's `ask_user` passes untouched. Not verified live: Codex `request_user_input`, which Codex offers only in Plan mode. The rename result is one run per harness: the hook context instructs the model, and no code blocks `rex session rename`.
 
-The suite has 41 tests.
+The suite had 41 tests.
+
+## Task owners and subagents (2026-10-30)
+
+Change: an owned worker's `SessionStart` context adds `OWNER`. Hooks no longer drop payloads carrying `agent_id`: a subagent writes no locator, its blocking prompts reach `alert()`, and in an owned pane its Reason `ask_user` is denied with `RETURN`. The hook command is unchanged, so no reinstall or Codex re-trust was needed.
+
+Live run (Claude Code 2.1.314 driver; workers `claude-sonnet-5-5` and `gpt-6.1-terra`, both `--effort low`, Codex 0.166.0). Each worker spawned one native subagent and told it to call Reason `ask_user`:
+
+- Both subagents were denied with `RETURN` verbatim. Claude shows it as `PreToolUse:mcp__reason-network__ask_user hook error: …`, and Codex as `Tool call blocked by PreToolUse hook: …`.
+- Each subagent put the question in its final reply. Each worker relayed it to the driver with `send_message`.
+- The driver answered "blue" to Claude and "red" to Codex. Claude resumed its subagent with `SendMessage`, and Codex resumed its own. Each subagent repeated its answer. No pop-up reached the human.
+- The Codex subagent saw `mcp__reason_network__ask_user`, and its hook ran with the pane's Rex context.
+- The Claude worker's `SessionStart:startup` hook returned `OWNER`, and the Codex root rollout contains it. The Claude subagent's transcript records the parent's `sessionId` on every line.
+- `cleanup` closed both workers with nothing uncertain.
+
+Evidence is in `.verification/subagent-routing-2026-10-30/`.
+
+Fixture-only: subagent permission prompts. The user's `defaultMode` is `auto`, which raised none. Not logged live: the `session_id` field of a Claude subagent's hook payload. The transcript evidence points to the parent's ID.
+
+The suite has 44 tests.

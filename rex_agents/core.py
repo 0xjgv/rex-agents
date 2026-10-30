@@ -29,6 +29,13 @@ RELAY = ("You are a rex-agents worker, and only your driver talks to the human. 
 # Rex's own SessionStart hook tells every agent to name its session, but a worker shares its driver's.
 KEEP_NAME = ("You are a rex-agents worker in your driver's Rex session. Leave the session's name alone: do not run "
              "`rex session rename`, even if another instruction tells you to name the session.")
+# An owned worker owns its task: subagents work under it, and questions climb one level at a time to the driver.
+OWNER = ("You own your task. Use native subagents freely, and tell each one to put any question in its final reply "
+         "instead of asking the user. Answer what you can. Send the rest, and your result, to your driver with MCP "
+         "send_message at the Reason address in your task.")
+# A subagent cannot receive a Reason reply, so its question goes back to the worker that launched it.
+RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks to the human. Do not ask the user. "
+          "End your turn and put the question in your final reply; the agent that launched you will get it answered.")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -165,20 +172,22 @@ class Integration:
         native_id = payload.get("session_id") or payload.get("conversation_id") or payload.get("sessionId")
         if not isinstance(native_id, str) or not native_id:
             raise Error("Hook payload has no native session ID")
-        # Tool-launched children inherit their parent's Rex context, but do not own its pane.
-        if ((kind == "codex" and os.environ.get("CLAUDECODE"))
-                or (kind == "claude-code" and os.environ.get("CODEX_THREAD_ID"))
-                or payload.get("agent_id")):
+        # The other harness's children inherit the pane's Rex context, but do not own its pane.
+        if (kind == "codex" and os.environ.get("CLAUDECODE")) or (kind == "claude-code" and os.environ.get("CODEX_THREAD_ID")):
             return
         location = dict(server=self.server, session=self.session, block=self.block)
         if not all(location.values()):
             return
         if event == "SessionStart":
+            # A native subagent shares its parent's session and pane; only its blocking prompts matter.
+            if payload.get("agent_id"):
+                return
             # Codex tool shells lose REX_*; launch and cleanup find the pane here instead.
             atomic(self.locator((kind, native_id)), location)
             with contextlib.suppress(Error, LookupError, TypeError):
-                if self.worker():
-                    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEP_NAME}}
+                if worker := self.worker():
+                    context = KEEP_NAME if worker[0] == HUMAN else f"{KEEP_NAME}\n\n{OWNER}"
+                    return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
             return
         if event not in BLOCKING:
             return
@@ -199,7 +208,7 @@ class Integration:
             return
         if payload.get("tool_name") in ("AskUserQuestion", ASK_USER[identity[0]]) and worker[0] != HUMAN:
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                    "permissionDecisionReason": RELAY}}
+                    "permissionDecisionReason": RETURN if payload.get("agent_id") else RELAY}}
         if payload.get("tool_name") == ASK_USER[identity[0]]:
             return  # Reason pops it up itself.
         def dicts(value):
