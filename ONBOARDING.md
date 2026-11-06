@@ -29,7 +29,7 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 `--model` is required. An omitted `--effort` inherits native settings. Selectors change no global defaults or permissions. The directory must exist. The launcher creates no worktree. It passes the task once as one argument; nothing evaluates it as shell code. Names use letters, digits, underscores, or hyphens, up to 64 characters.
 
-`--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it beside the driver's own worker WORKER, in that worker's tab, with the same balanced columns. The two options are exclusive. Rex closes a tab with its last pane.
+`--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it in the driver's own worker WORKER's tab. When that tab holds only the driver's workers, as a `--tab` tab does, every pane in it, WORKER included, shares the tab as an equal grid with no more rows than columns: 2 sit side by side, 4 sit 2x2, 5 sit 2+1+2, 9 sit 3x3. Otherwise the worker opens beside WORKER in the same balanced columns as beside the driver. The two options are exclusive. Rex closes a tab with its last pane.
 
 The result returns the session ID, pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 

@@ -238,3 +238,12 @@ A `gamma` driver (Claude Code 2.1.314, Opus) ran "how would you implement the li
 Change: `cleanup --name NAME` closes one owned worker. Live with two `claude-haiku-5-5` workers: `--name drop-b` closed only `drop-b`; `--name nope` returned `gone: [{"name": "nope"}]`; plain `cleanup` closed `keep-a`. Evidence is in `.verification/cleanup-name-2026-10-30/run.txt`.
 
 The suite has 45 tests.
+
+## Worker tabs share a grid (2026-11-06)
+
+`--with WORKER` into a tab that holds only the caller's workers, as a `--tab` tab does, now places every pane in it, WORKER included, as an equal grid with no more rows than columns. It replaces the 2/3 split that kept WORKER in the driver's seat. A tab holding any other pane keeps the old placement.
+
+- Live run from a Claude driver pane, without reinstalling: `grid-1` with `--tab`, then `grid-2` to `grid-5` with `--with grid-1`, all idle `claude-haiku-5-5` (`--effort low`, no task). Anchors: `grid-1` twice, `grid-2`, then the tab's root split. `rex window ls --json` showed `grid-1`/`grid-3` at x 0, `grid-2` alone at x 0.333, and `grid-4`/`grid-5` at x 0.667: every column 0.333 wide, each half-height pane 0.5 high. The tab was not active and its focus stayed on `grid-1`. Moved `grid-4` still showed `Haiku 5.5 with low effort`.
+- `cleanup` closed all five with nothing uncertain. Evidence is in `.verification/grid-tab-2026-11-06/`.
+
+Fixture-only: grids past five panes (3x3 at nine) and the fallback for a tab holding other panes. The suite has 56 tests.

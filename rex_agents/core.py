@@ -301,27 +301,39 @@ class Integration:
             rows += [dict(row, session=name) for row in data["blocks"]]
         return sorted(rows, key=lambda row: row["block_id"])
 
-    def place(self, driver, mine):
-        """(anchor, direction, ratio, moved) for the next worker, in balanced columns of up to three on the driver's right."""
-        listing = decode(self.rex("window", "ls", "-s", driver["session"], "--json")) if mine else {"windows": []}
+    def place(self, driver, mine, grid=False):
+        """(anchor, direction, ratio, moved, widen) for the next worker.
+
+        Workers fill balanced columns of up to three on the driver's right. With grid, a tab that holds only the
+        caller's workers is shared by all of them, in no more rows than columns."""
+        listing = decode(self.rex("window", "ls", "-s", driver["session"], "--json")) if mine or grid else {"windows": []}
         try:
             window = next((w for w in listing["windows"] if w["window_id"] == driver.get("window_id")), {})
-            tree = {}
-            for layer in window.get("layers", ()):
-                parents(layer["layout"], tree)
-            # The workers' area is what the driver's own split put on its right.
-            split = tree.get(driver["block_id"], {})
-            beside = split.get("direction") == "horizontal" and node_id(split["before"]) == driver["block_id"]
-            area = split["after"] if beside else None
-            if not area or not set(leaves(area)) <= {b["block_id"] for b in mine}:
-                return driver["block_id"], "horizontal", 2 / 3, None
+            workers = {b["block_id"] for b in mine}
+            root = next((layer["layout"] for layer in window.get("layers", ())
+                         if driver["block_id"] in leaves(layer["layout"])), None)
+            if grid and root and set(leaves(root)) <= workers | {driver["block_id"]}:
+                area, cap, widen = root, len(columns(root)), False
+            else:
+                tree = {}
+                for layer in window.get("layers", ()):
+                    parents(layer["layout"], tree)
+                # The workers' area is what the driver's own split put on its right.
+                split = tree.get(driver["block_id"], {})
+                beside = split.get("direction") == "horizontal" and node_id(split["before"]) == driver["block_id"]
+                area = split["after"] if beside else None
+                if not area or not set(leaves(area)) <= workers:
+                    return driver["block_id"], "horizontal", 2 / 3, None, False
+                cap, widen = 3, True
             stacks = columns(area)
             column = min(stacks, key=lambda c: len(leaves(c)))  # the leftmost of the shortest
-            if (rows := len(leaves(column))) < 3:
-                return node_id(column), "vertical", rows / (rows + 1), None
+            if (rows := len(leaves(column))) < cap:
+                return node_id(column), "vertical", rows / (rows + 1), None, False
             # Every column is full: open one as wide as each, and move in the last column's lowest unfocused worker.
-            moved = next(b for b in reversed(leaves(stacks[-1])) if b != window.get("focused_block_id"))
-            return node_id(area), "horizontal", len(stacks) / (len(stacks) + 1), moved
+            # A lone pane in a grid tab just gains a neighbor.
+            moved = None if rows == 1 else next(b for b in reversed(leaves(stacks[-1]))
+                                                if b != window.get("focused_block_id"))
+            return node_id(area), "horizontal", len(stacks) / (len(stacks) + 1), moved, widen
         except (KeyError, TypeError) as exc:
             raise Error(f"Cannot place the worker in Rex's layout: missing {exc}") from exc
 
@@ -386,12 +398,12 @@ class Integration:
             layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
             if tab:
                 # A tab of its own in the driver's session, named after the worker.
-                method, moved = "session.new_window", None
+                method, moved, widen = "session.new_window", None, False
                 request = dict(session_id=driver["session"], window_label=name, focus=False, layout=layout)
             else:
                 # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
                 method = "session.new_split"
-                anchor_id, direction, ratio, moved = self.place(anchor, mine)
+                anchor_id, direction, ratio, moved, widen = self.place(anchor, mine, grid=bool(beside))
                 request = dict(session_id=anchor["session"], anchor_id=anchor_id, direction=direction, side="after",
                                ratio=ratio, focus=False, layout=layout)
             try:
@@ -400,12 +412,13 @@ class Integration:
                 raise Error(f"Launch outcome uncertain for {name}: {exc}. "
                             f"A pane labeled {label} exists if Rex created it; a retry refuses while it does.") from exc
             if moved:
-                # The new column takes a second worker, and the columns now share half the tab.
+                # The new column takes a second worker; beside the driver, the columns now share half the tab.
                 new = result["block_ids"][0]
-                steps = (("session.move_block", dict(block_id=moved, anchor_block_id=new, direction="vertical",
-                                                     side="before")),
-                         ("session.resize_pane", dict(direction="horizontal", before_block_id=anchor["block_id"],
-                                                      after_block_id=new, ratio=0.5)))
+                steps = [("session.move_block", dict(block_id=moved, anchor_block_id=new, direction="vertical",
+                                                     side="before"))]
+                if widen:
+                    steps.append(("session.resize_pane", dict(direction="horizontal", before_block_id=anchor["block_id"],
+                                                              after_block_id=new, ratio=0.5)))
                 try:
                     for method, request in steps:
                         self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=anchor["session"])))

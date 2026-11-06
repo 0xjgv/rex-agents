@@ -79,6 +79,14 @@ class Fake(Integration):
         return {"split": dict(split, before=self.resize(split["before"], request),
                               after=self.resize(split["after"], request))}
 
+    def edit(self, session, block, change):
+        """Apply change to the layout of the window holding block."""
+        for window, (s, layout) in self.tabs.items():
+            if s == session and block in ids(layout):
+                self.tabs[window] = (s, change(layout))
+                return
+        self.layouts[session] = change(self.layouts[session])
+
     def labels(self):
         return [b["label"] for blocks in self.sessions.values() for b in blocks]
 
@@ -135,13 +143,13 @@ class Fake(Integration):
             session, block = request["session_id"], request["block_id"]
             split = dict(split_id=f"split:m{block[6:]}", direction=request["direction"], ratio=0.5,
                          before={"block_id": block})
-            self.layouts[session] = self.graft(prune(self.layouts[session], block), request["anchor_block_id"],
-                                               lambda old: {"split": dict(split, after=old)})
+            self.edit(session, block, lambda layout: self.graft(prune(layout, block), request["anchor_block_id"],
+                                                                lambda old: {"split": dict(split, after=old)}))
             return json.dumps({"created_split_id": split["split_id"], "revision": self.n})
         if args == ("api", "call", "session.resize_pane", "-"):
             request = json.loads(stdin)
             self.edits.append(("resize", request))
-            self.layouts[request["session_id"]] = self.resize(self.layouts[request["session_id"]], request)
+            self.edit(request["session_id"], request["before_block_id"], lambda layout: self.resize(layout, request))
             return json.dumps({"revision": self.n})
         if args[:2] == ("block", "close"):
             session, block = args[3], args[4]
@@ -443,18 +451,39 @@ class LaunchTests(Base):
         self.assertEqual((result["session_id"], result["window_id"]), ("session:a", "w2"))
         self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
 
-    def test_with_stacks_helpers_beside_the_worker_in_its_tab(self):
+    def test_with_shares_the_worker_tab_as_a_grid(self):
         self.agent()
         t1 = self.launch("t1", tab=True)["block_ids"][0]
         self.launch("t2", tab=True)
-        h1 = self.launch("h1", beside="t1")["block_ids"][0]
-        self.assertEqual(self.placed(), (t1, "horizontal", 2 / 3))
-        h2 = self.launch("h2", beside="t1")["block_ids"][0]
-        self.assertEqual(self.placed(), (h1, "vertical", 0.5))
-        self.assertEqual(shape(self.app.tabs["w2"][1]), ("horizontal", t1, ("vertical", h1, h2)))
+        h = {}
+        for n in range(1, 9):
+            h[n] = self.launch(f"h{n}", beside="t1")["block_ids"][0]
+            layout = self.app.tabs["w2"][1]
+            if n == 1:  # side by side, half each
+                self.assertEqual(self.placed(), (t1, "horizontal", 1 / 2))
+                self.assertEqual(shape(layout), ("horizontal", t1, h[1]))
+            if n == 3:  # 2x2
+                self.assertEqual(shape(layout), ("horizontal", ("vertical", t1, h[2]), ("vertical", h[1], h[3])))
+            if n == 4:  # 2+1+2: a third column takes the second column's lowest worker
+                self.assertEqual(self.placed()[1:], ("horizontal", 2 / 3))
+                self.assertEqual(shape(layout), ("horizontal", ("horizontal", ("vertical", t1, h[2]), h[1]),
+                                                 ("vertical", h[3], h[4])))
+        self.assertEqual(shape(self.app.tabs["w2"][1]), ("horizontal", ("horizontal",
+            ("vertical", ("vertical", t1, h[2]), h[6]), ("vertical", ("vertical", h[1], h[5]), h[7])),
+            ("vertical", ("vertical", h[3], h[4]), h[8])))  # 3x3
+        self.assertEqual([(kind, r["block_id"]) for kind, r in self.app.edits], [("move", h[3])])
         self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
         self.launch("w1")  # the driver's own tab still places beside the driver
         self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
+
+    def test_with_in_a_tab_holding_other_panes_splits_the_worker(self):
+        self.agent()
+        t1 = self.launch("t1", tab=True)["block_ids"][0]
+        shell = self.app.add("session:a", window="w2")
+        self.app.tabs["w2"] = ("session:a", {"split": dict(split_id="split:s", direction="vertical", ratio=0.5,
+                                                         before={"block_id": t1}, after={"block_id": shell})})
+        self.launch("h1", beside="t1")
+        self.assertEqual(self.placed(), (t1, "horizontal", 2 / 3))
 
     def test_with_requires_a_worker_you_own(self):
         self.agent()
