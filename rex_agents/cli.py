@@ -19,6 +19,9 @@ def parser():
     launch.add_argument("--task-file")
     launch.add_argument("--model", required=True, help="claude-* runs Claude Code; gpt-* runs Codex")
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
+    where = launch.add_mutually_exclusive_group()
+    where.add_argument("--tab", action="store_true", help="Open the worker in a new tab of the driver's session")
+    where.add_argument("--with", dest="beside", metavar="WORKER", help="Open the worker beside your worker WORKER, in its tab")
     cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     cleanup.add_argument("--name", help="Close only this owned worker")
     commands.add_parser("install")
@@ -36,7 +39,8 @@ def main(argv=None):
         result = None
         if args.command == "launch":
             task = Path(args.task_file).read_text() if args.task_file else None
-            result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort)
+            result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort, tab=args.tab,
+                                beside=args.beside)
         elif args.command == "cleanup":
             result = app.cleanup(name=args.name)
             print(json.dumps(result, indent=2))

@@ -332,7 +332,7 @@ class Integration:
             fcntl.flock(stream, fcntl.LOCK_EX)
             yield
 
-    def launch(self, name, cwd, model, task=None, effort=None):
+    def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort)):
@@ -369,19 +369,33 @@ class Integration:
                 raise Error("Owned workers cannot launch nested workers")
             if any((worker := parse(b.get("label"))) and worker[1] == name for b in blocks):
                 raise Error(f"Worker {name} already has a Rex pane; close it before relaunching")
+            # The worker opens beside the driver, or beside one of the driver's own workers.
+            anchor = driver
+            if beside:
+                anchor = next((b for b in blocks if parse(b.get("label")) == (me, beside)), None)
+                if anchor is None:
+                    raise Error(f"No worker {beside} of yours to open beside")
             if kind == "claude":
                 trust_claude(directory)
             mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
-                    and b["session"] == driver["session"] and b.get("window_id") == driver.get("window_id")]
+                    and b["block_id"] != anchor["block_id"]
+                    and b["session"] == anchor["session"] and b.get("window_id") == anchor.get("window_id")]
             # The caller's PATH goes first, as `rex split` sends it.
             options = dict(command=argv, cwd=str(directory),
                            path_prepend=[p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
-            # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
-            anchor, direction, ratio, moved = self.place(driver, mine)
-            request = dict(session_id=driver["session"], anchor_id=anchor, direction=direction, side="after",
-                           ratio=ratio, focus=False, layout={"block": dict(flavor=TERMINAL, label=label, options=options)})
+            layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
+            if tab:
+                # A tab of its own in the driver's session, named after the worker.
+                method, moved = "session.new_window", None
+                request = dict(session_id=driver["session"], window_label=name, focus=False, layout=layout)
+            else:
+                # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
+                method = "session.new_split"
+                anchor_id, direction, ratio, moved = self.place(anchor, mine)
+                request = dict(session_id=anchor["session"], anchor_id=anchor_id, direction=direction, side="after",
+                               ratio=ratio, focus=False, layout=layout)
             try:
-                result = decode(self.rex("api", "call", "session.new_split", "-", stdin=json.dumps(request)))
+                result = decode(self.rex("api", "call", method, "-", stdin=json.dumps(request)))
             except Error as exc:
                 raise Error(f"Launch outcome uncertain for {name}: {exc}. "
                             f"A pane labeled {label} exists if Rex created it; a retry refuses while it does.") from exc
@@ -390,14 +404,14 @@ class Integration:
                 new = result["block_ids"][0]
                 steps = (("session.move_block", dict(block_id=moved, anchor_block_id=new, direction="vertical",
                                                      side="before")),
-                         ("session.resize_pane", dict(direction="horizontal", before_block_id=driver["block_id"],
+                         ("session.resize_pane", dict(direction="horizontal", before_block_id=anchor["block_id"],
                                                       after_block_id=new, ratio=0.5)))
                 try:
                     for method, request in steps:
-                        self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=driver["session"])))
+                        self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=anchor["session"])))
                 except Error as exc:
                     raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
-            return dict(result, session_id=driver["session"], name=name, label=label, registration="pending")
+            return dict(result, session_id=anchor["session"], name=name, label=label, registration="pending")
 
     def cleanup(self, name=None):
         identity = native_identity()

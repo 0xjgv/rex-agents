@@ -23,6 +23,12 @@ def shape(node):
     return (split["direction"], shape(split["before"]), shape(split["after"])) if split else node["block_id"]
 
 
+def ids(node):
+    """Every block and split ID in a layout tree."""
+    split = node.get("split")
+    return [core.node_id(node)] + (ids(split["before"]) + ids(split["after"]) if split else [])
+
+
 def prune(node, block):
     """The layout after Rex closes a block: its sibling takes the parent split's place."""
     if node.get("block_id") == block:
@@ -42,6 +48,7 @@ class Fake(Integration):
         self.split_error, self.split_creates, self.down, self.focused = None, True, False, None
         self.edits = []  # session.move_block and session.resize_pane requests
         self.ghosts = []  # sessions `ls` reports that close before their block listing
+        self.tabs = {}  # window ID -> (session, layout) for windows past w1
 
     def add(self, session, label="shell", window="w1"):
         self.n += 1
@@ -89,8 +96,17 @@ class Fake(Integration):
                 raise CommandError(f'session target "{args[3]}" not found')
             return json.dumps({"blocks": self.sessions[args[3]]})
         if args[:2] == ("window", "ls"):
+            tabs = [{"window_id": w, "layers": [{"layout": layout}]}
+                    for w, (session, layout) in self.tabs.items() if session == args[3]]
             return json.dumps({"windows": [{"window_id": "w1", "focused_block_id": self.focused,
-                                            "layers": [{"layout": self.layouts[args[3]]}]}]})
+                                            "layers": [{"layout": self.layouts[args[3]]}]}, *tabs]})
+        if args == ("api", "call", "session.new_window", "-"):
+            request = json.loads(stdin)
+            self.requests.append(request)
+            session, window = request["session_id"], f"w{len(self.tabs) + 2}"
+            block = self.add(session, request["layout"]["block"]["label"], window=window)
+            self.tabs[window] = (session, {"block_id": block})
+            return json.dumps({"window_id": window, "block_ids": [block], "revision": self.n})
         if args[:2] == ("session", "kill"):
             del self.sessions[args[2]]
             return ""
@@ -99,11 +115,16 @@ class Fake(Integration):
             self.requests.append(request)
             session = request["session_id"]
             if self.split_creates:
-                block = self.add(session, request["layout"]["block"]["label"])
+                window = next((w for w, (s, layout) in self.tabs.items()
+                               if s == session and request["anchor_id"] in ids(layout)), "w1")
+                block = self.add(session, request["layout"]["block"]["label"], window=window)
                 split = dict(split_id=f"split:{block[6:]}", direction=request["direction"], ratio=request["ratio"],
                              after={"block_id": block})
-                self.layouts[session] = self.graft(self.layouts[session], request["anchor_id"],
-                                                   lambda old: {"split": dict(split, before=old)})
+                wrap = lambda old: {"split": dict(split, before=old)}
+                if window == "w1":
+                    self.layouts[session] = self.graft(self.layouts[session], request["anchor_id"], wrap)
+                else:
+                    self.tabs[window] = (session, self.graft(self.tabs[window][1], request["anchor_id"], wrap))
             if self.split_error:
                 raise self.split_error
             return json.dumps({"anchor_id": request["anchor_id"], "block_ids": [block],
@@ -411,6 +432,43 @@ class LaunchTests(Base):
         self.app.add("session:a", "rex-agents:feedfacefeedface:theirs")
         self.assertEqual(self.launch("w1")["session_id"], "session:a")
         self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
+
+    def test_tab_opens_worker_alone_in_an_unfocused_tab(self):
+        self.agent()
+        result = self.launch("t1", tab=True)
+        request = self.app.requests[-1]
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_window", "-"))
+        self.assertEqual((request["session_id"], request["window_label"], request["focus"]), ("session:a", "t1", False))
+        self.assertEqual(self.block(request)["label"], f"rex-agents:{ME}:t1")
+        self.assertEqual((result["session_id"], result["window_id"]), ("session:a", "w2"))
+        self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
+
+    def test_with_stacks_helpers_beside_the_worker_in_its_tab(self):
+        self.agent()
+        t1 = self.launch("t1", tab=True)["block_ids"][0]
+        self.launch("t2", tab=True)
+        h1 = self.launch("h1", beside="t1")["block_ids"][0]
+        self.assertEqual(self.placed(), (t1, "horizontal", 2 / 3))
+        h2 = self.launch("h2", beside="t1")["block_ids"][0]
+        self.assertEqual(self.placed(), (h1, "vertical", 0.5))
+        self.assertEqual(shape(self.app.tabs["w2"][1]), ("horizontal", t1, ("vertical", h1, h2)))
+        self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
+        self.launch("w1")  # the driver's own tab still places beside the driver
+        self.assertEqual(self.placed(), (self.driver, "horizontal", 2 / 3))
+
+    def test_with_requires_a_worker_you_own(self):
+        self.agent()
+        self.app.add("session:a", "rex-agents:feedfacefeedface:theirs")
+        for name in ("theirs", "missing"):
+            with self.assertRaisesRegex(Error, f"No worker {name} of yours"):
+                self.launch("h1", beside=name)
+        self.assertEqual(self.app.requests, [])
+
+    def test_cli_tab_and_with_are_exclusive(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", "--tab", "--with", "t1"])
+        args = cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", "--with", "t1"])
+        self.assertEqual((args.tab, args.beside), (False, "t1"))
 
     def test_human_launch_stacks_too(self):
         h1 = self.launch("h1")["block_ids"][0]
