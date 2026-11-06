@@ -1,11 +1,14 @@
 ---
 name: rex-agents
+disable-model-invocation: true
 description: Work with other models as a team. Launch opus, fable, sonnet, haiku (Claude Code) or sol, terra, astra, luna (Codex) as interactive workers in Rex panes, collaborate with them through Reason, and close them when done. Use when the user asks to work with, consult, or delegate to one of these models, or to a team of agents.
 ---
 
 # Rex agents
 
 You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, in columns on the right of your tab. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
+
+Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex's SessionStart hook says to name the session. Your workers share your session, and the human owns its name.
 
 ## Pick model and effort
 
@@ -24,8 +27,8 @@ The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Us
 
 | Role | Fits | Model preference | Effort |
 |---|---|---|---|
-| `implement` | Writing or changing code, including fixing a bug whose cause is unknown | sol → opus | `xhigh` |
-| `validate` | Checking finished work for correctness: review, tests, verification | opus → astra | `xhigh` |
+| `implement` | Writing or changing code, including fixing a bug whose cause is unknown | sol → opus | `medium` |
+| `validate` | Checking finished work for correctness: review, tests, verification | opus → astra | `high` |
 | `plan` | Designing the approach: structure outlines and implementation plans | opus → sol | `xhigh` |
 | `advise` | Decisions, trade-offs, and second opinions | astra → fable | `high` |
 | `research` | Reading code or docs to answer questions with evidence, without changing anything | terra → sonnet | `high` |
