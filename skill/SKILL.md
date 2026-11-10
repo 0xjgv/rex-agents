@@ -46,6 +46,8 @@ rex-agents launch --name sol-plan --cwd /absolute/project --model gpt-6.1-sol --
 
 Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is passed once, literally; no worktree is created. The result says `registration: pending`; the worker is ready when it messages you. On `Launch outcome uncertain`, look for its name in `rex-agents status` before retrying.
 
+`--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included.
+
 `--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. `--new-session` opens the worker in a new Rex session named after it; add its helpers there with `--with WORKER`. Close any of them with `cleanup --name`; a tab closes with its last pane, and so does a `--new-session` session, even when its worker had already ended.
 
 ## Watch
