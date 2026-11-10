@@ -259,7 +259,8 @@ class LaunchTests(Base):
 
     def test_env_prefixes_claude_argv(self):
         self.agent()
-        base = ["/bin/agent", "--name", "w", "--model", "claude-opus-5-5"]
+        base = ["/bin/agent", "--name", "w", "--settings", '{"crossSessionInbound":"accept"}', "--model",
+                "claude-opus-5-5"]
         for i, (env, prefix) in enumerate(((None, []), ([], []), (["A=1"], ["/usr/bin/env", "A=1"]),
                                            (["LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"],
                                             ["/usr/bin/env", "LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"]))):
