@@ -27,8 +27,8 @@ ASK_USER = {"claude-code": "mcp__reason-network__ask_user", "codex": "mcp__reaso
 RELAY = ("You are a rex-agents worker, and only your driver talks to the human. Send this question to your "
          "driver with MCP send_message, at the Reason address in your task, then wait for its reply.")
 # Rex's own SessionStart hook tells every agent to name its session, but a worker shares its driver's.
-KEEP_NAME = ("You are a rex-agents worker in your driver's Rex session. Leave the session's name alone: do not run "
-             "`rex session rename`, even if another instruction tells you to name the session.")
+KEEP_NAME = ("You are a rex-agents worker, and your driver named your Rex session. Leave the session's name alone: do "
+             "not run `rex session rename`, even if another instruction tells you to name the session.")
 # An owned worker owns its task: subagents work under it, and questions climb one level at a time to the driver.
 OWNER = ("You own your task. Use native subagents freely, and tell each one to put any question in its final reply "
          "instead of asking the user. Answer what you can. Send the rest, and your result, to your driver with MCP "
@@ -46,6 +46,7 @@ class Error(Exception):
 
 class CommandError(Error):
     """The subprocess exited unsuccessfully, rather than timing out locally."""
+    stdout = ""  # what it printed before failing: `rex wait` reports a pane's end there
 
 
 def run(argv, *, env=None, stdin=None, timeout=12):
@@ -55,8 +56,9 @@ def run(argv, *, env=None, stdin=None, timeout=12):
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Error(f"{argv[0]}: {exc}") from exc
     if result.returncode:
-        raise CommandError((result.stderr or result.stdout).strip() or
-                    f"{argv[0]} exited {result.returncode}")
+        error = CommandError((result.stderr or result.stdout).strip() or f"{argv[0]} exited {result.returncode}")
+        error.stdout = result.stdout
+        raise error
     return result.stdout
 
 
@@ -190,7 +192,9 @@ class Integration:
         self.block = block or os.environ.get("REX_BLOCK")
 
     def rex(self, *args, stdin=None, timeout=12):
-        argv = [os.environ.get("REX_AGENTS_REX", "rex"), "--autostart=false", "--timeout", f"{max(1, timeout - 2)}s"]
+        # Rex's --timeout limits connecting and each request, never a stream; timeout=None lets `rex wait` run on.
+        argv = [os.environ.get("REX_AGENTS_REX", "rex"), "--autostart=false", "--timeout",
+                f"{max(1, (timeout or 12) - 2)}s"]
         if self.server:
             argv += ["-S", self.server]
         return run(argv + list(args), stdin=stdin, timeout=timeout)
@@ -344,7 +348,7 @@ class Integration:
             fcntl.flock(stream, fcntl.LOCK_EX)
             yield
 
-    def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None):
+    def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort)):
@@ -396,10 +400,21 @@ class Integration:
             options = dict(command=argv, cwd=str(directory),
                            path_prepend=[p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
             layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
-            if tab:
-                # A tab of its own in the driver's session, named after the worker.
+            session = anchor["session"]
+            if new_session:
+                # A worker that ended on its own left its session behind, since a session outlives its last pane.
+                # Its relaunch moves back in, unless a pane that is not the caller's worker holds the session now.
+                taken = {b["session"] for b in blocks if (parse(b.get("label")) or (None,))[0] != me}
+                session = next((s["session_id"] for s in decode(self.rex("ls", "--json")).get("sessions", [])
+                                if s.get("label") == name and s["session_id"] not in taken), None)
+            if new_session and not session:
+                # A Rex session of its own, named after the worker. Rex attaches no client to it, so focus stays put.
+                method, moved, widen = "session.create", None, False
+                request = dict(label=name, initial_windows=[dict(window_label=name, layout=layout)])
+            elif tab or new_session:
+                # A tab of its own, named after the worker, in the driver's session or the worker's old one.
                 method, moved, widen = "session.new_window", None, False
-                request = dict(session_id=driver["session"], window_label=name, focus=False, layout=layout)
+                request = dict(session_id=session, window_label=name, focus=False, layout=layout)
             else:
                 # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
                 method = "session.new_split"
@@ -408,7 +423,9 @@ class Integration:
                                ratio=ratio, focus=False, layout=layout)
             try:
                 result = decode(self.rex("api", "call", method, "-", stdin=json.dumps(request)))
-            except Error as exc:
+                if method == "session.create":
+                    session, result = result["session_id"], result["initial_windows"][0]
+            except (Error, LookupError, TypeError) as exc:
                 raise Error(f"Launch outcome uncertain for {name}: {exc}. "
                             f"A pane labeled {label} exists if Rex created it; a retry refuses while it does.") from exc
             if moved:
@@ -424,7 +441,32 @@ class Integration:
                         self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=anchor["session"])))
                 except Error as exc:
                     raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
-            return dict(result, session_id=anchor["session"], name=name, label=label, registration="pending")
+            return dict(result, session_id=session, name=name, label=label, registration="pending")
+
+    def status(self):
+        """The caller's live workers, oldest first. A worker with no row has no pane: it ended or was closed."""
+        identity = native_identity()
+        with contextlib.suppress(Error):
+            self.where(identity)
+        me = owner(identity)
+        return dict(workers=[dict(name=w[1], session=b["session"], block=b["block_id"])
+                             for b in self.panes() if (w := parse(b.get("label"))) and w[0] == me])
+
+    def wait(self, name):
+        """Block until the caller's worker ends, then say how. Rex streams the end, so nothing polls."""
+        pane = next((w for w in self.status()["workers"] if w["name"] == name), None)
+        gone = dict(name=name, gone=True)
+        if not pane:
+            return gone
+        try:
+            ended = self.rex("wait", pane["block"], "-s", pane["session"], "--json", timeout=None)
+        except CommandError as exc:
+            # Rex exits with the program's own status. Only its JSON payload proves the pane ended.
+            if not (ended := exc.stdout).strip():
+                if "not found" in str(exc):
+                    return gone
+                raise
+        return dict(pane, ended=decode(ended))
 
     def cleanup(self, name=None):
         identity = native_identity()
@@ -437,13 +479,19 @@ class Integration:
         result = dict(closed=[], gone=[], uncertain=[])
         with self.lock():
             try:
-                owned = [(b, w) for b in self.panes() if (w := parse(b.get("label"))) and w[0] == me
-                         and name in (None, w[1])]
+                rows = self.panes()
+                owned = [(b, w) for b in rows if (w := parse(b.get("label"))) and w[0] == me and name in (None, w[1])]
             except Error as exc:
                 result["uncertain"].append(dict(error=f"Rex panes unavailable: {exc}"))
                 return result
             if name and not owned:
                 result["gone"].append(dict(name=name))
+                # A worker that ended on its own left its --new-session session behind, empty. Killing it loses nothing.
+                with contextlib.suppress(Error):
+                    held = {b["session"] for b in rows}
+                    for session in decode(self.rex("ls", "--json")).get("sessions", []):
+                        if session.get("label") == name and session["session_id"] not in held:
+                            self.rex("session", "kill", session["session_id"])
                 return result
             for pane, worker in owned:
                 item = dict(name=worker[1], session=pane["session"], block=pane["block_id"])

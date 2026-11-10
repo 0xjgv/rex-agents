@@ -49,6 +49,9 @@ class Fake(Integration):
         self.edits = []  # session.move_block and session.resize_pane requests
         self.ghosts = []  # sessions `ls` reports that close before their block listing
         self.tabs = {}  # window ID -> (session, layout) for windows past w1
+        self.names = {}  # session -> label, for sessions a launch created
+        self.ends = {}  # block -> (exit status, stdout) of `rex wait --json` once the pane ends
+        self.waited = 0  # the local time limit the last wait ran under
 
     def add(self, session, label="shell", window="w1"):
         self.n += 1
@@ -98,7 +101,8 @@ class Fake(Integration):
         if self.down:
             raise Error("rex: timed out")
         if args == ("ls", "--json"):
-            return json.dumps({"sessions": [{"session_id": s} for s in [*self.sessions, *self.ghosts]]})
+            return json.dumps({"sessions": [{"session_id": s, "label": self.names.get(s, s)}
+                                            for s in [*self.sessions, *self.ghosts]]})
         if args[:2] == ("block", "ls"):
             if args[3] not in self.sessions:
                 raise CommandError(f'session target "{args[3]}" not found')
@@ -118,6 +122,27 @@ class Fake(Integration):
         if args[:2] == ("session", "kill"):
             del self.sessions[args[2]]
             return ""
+        if args == ("api", "call", "session.create", "-"):
+            request = json.loads(stdin)
+            self.requests.append(request)
+            session = f"session:n{len(self.sessions)}"
+            self.names[session] = request["label"]
+            block = self.add(session, request["initial_windows"][0]["layout"]["block"]["label"])
+            self.layouts[session] = {"block_id": block}
+            return json.dumps({"session_id": session,
+                               "initial_windows": [{"window_id": "w1", "block_ids": [block], "revision": self.n}]})
+        if args[0] == "wait":
+            self.waited = timeout
+            if args[1] not in self.ends:
+                raise CommandError(f'block or window target "{args[1]}" not found')
+            code, payload = self.ends[args[1]]
+            self.drop(args[1])
+            if code:
+                # Rex exits with the program's own status and still prints the payload.
+                error = CommandError("Error: ended")
+                error.stdout = payload
+                raise error
+            return payload
         if args == ("api", "call", "session.new_split", "-"):
             request = json.loads(stdin)
             self.requests.append(request)
@@ -494,10 +519,53 @@ class LaunchTests(Base):
         self.assertEqual(self.app.requests, [])
 
     def test_cli_tab_and_with_are_exclusive(self):
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", "--tab", "--with", "t1"])
+        for place in ("--tab", "--new-session"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", place, "--with", "t1"])
         args = cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", "--with", "t1"])
-        self.assertEqual((args.tab, args.beside), (False, "t1"))
+        self.assertEqual((args.tab, args.new_session, args.beside), (False, False, "t1"))
+
+    def test_new_session_gives_the_worker_and_its_helpers_a_session_of_their_own(self):
+        self.agent()
+        result = self.launch("t1", new_session=True)
+        request = self.app.requests[-1]
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.create", "-"))
+        self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]), ("t1", "t1"))
+        self.assertEqual(request["initial_windows"][0]["layout"]["block"]["label"], f"rex-agents:{ME}:t1")
+        session, t1 = result["session_id"], result["block_ids"][0]
+        self.assertNotEqual(session, "session:a")
+        self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
+        h1 = self.launch("h1", beside="t1")["block_ids"][0]  # a helper joins the worker's session, side by side
+        self.assertEqual((self.app.requests[-1]["session_id"], self.placed()), (session, (t1, "horizontal", 1 / 2)))
+        self.assertEqual(shape(self.app.layouts[session]), ("horizontal", t1, h1))
+        self.assertEqual({w["name"]: w["session"] for w in self.app.status()["workers"]}, {"t1": session, "h1": session})
+        self.app.cleanup(name="h1")
+        self.assertIn(session, self.app.sessions)  # the worker still holds it
+        self.app.cleanup(name="t1")
+        self.assertEqual(sorted(self.app.sessions), ["session:a"])
+
+    def test_relaunch_moves_back_into_the_session_its_worker_left_empty(self):
+        self.agent()
+        first = self.launch("t1", new_session=True)
+        self.app.drop(first["block_ids"][0])  # the worker ended on its own; Rex keeps the empty session
+        again = self.launch("t1", new_session=True)
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_window", "-"))
+        self.assertEqual((again["session_id"], self.app.requests[-1]["focus"]), (first["session_id"], False))
+        self.app.cleanup(name="t1")
+        self.assertEqual(sorted(self.app.sessions), ["session:a"])
+        # A session with that label that someone else's pane holds is left alone.
+        self.app.names["session:b"] = "t2"
+        self.app.add("session:b")
+        self.assertNotIn(self.launch("t2", new_session=True)["session_id"], ("session:a", "session:b"))
+
+    def test_failed_session_create_is_uncertain(self):
+        self.agent()
+        sessions = json.dumps({"sessions": [{"session_id": "session:a", "label": "a"}]})
+        with mock.patch.object(self.app, "rex", side_effect=[sessions,
+                                                             json.dumps({"blocks": self.app.sessions["session:a"]}),
+                                                             sessions, json.dumps({"session_id": "session:n1"})]):
+            with self.assertRaisesRegex(Error, "Launch outcome uncertain for t1"):
+                self.launch("t1", new_session=True)
 
     def test_human_launch_stacks_too(self):
         h1 = self.launch("h1")["block_ids"][0]
@@ -565,6 +633,15 @@ class CleanupTests(Base):
         self.assertEqual(sorted(self.app.sessions), ["session:a", "session:b", "session:c"])
         self.assertEqual(shape(self.app.layouts["session:a"]), self.driver)
 
+    def test_named_cleanup_kills_the_empty_session_its_worker_left(self):
+        self.agent()
+        first = self.launch("t1", new_session=True)
+        self.app.drop(first["block_ids"][0])  # the worker ended on its own; Rex keeps the empty session
+        self.app.names["session:b"] = "t1"  # the same label on a session that holds a pane
+        self.app.add("session:b")
+        self.assertEqual(self.app.cleanup(name="t1"), dict(closed=[], gone=[dict(name="t1")], uncertain=[]))
+        self.assertEqual(sorted(self.app.sessions), ["session:a", "session:b"])
+
     def test_uncertain_outcomes(self):
         self.agent()
         self.launch("w1")
@@ -614,6 +691,75 @@ class CleanupTests(Base):
                 fake.cleanup.assert_called_with(name=None)
                 cli.main(["cleanup", "--name", "w1"])
                 fake.cleanup.assert_called_with(name="w1")
+
+
+class StatusTests(Base):
+    def test_lists_only_the_callers_live_workers(self):
+        self.agent()
+        a = self.app.add("session:a", f"rex-agents:{ME}:a")
+        self.app.add("session:a", "rex-agents:feedfacefeedface:x")
+        self.app.add("session:b", "rex-agents:-:human")
+        b = self.app.add("session:b", f"rex-agents:{ME}:b")
+        self.assertEqual(self.app.status(), dict(workers=[dict(name="a", session="session:a", block=a),
+                                                         dict(name="b", session="session:b", block=b)]))
+        self.app.drop(a)
+        self.assertEqual([w["name"] for w in self.app.status()["workers"]], ["b"])
+
+    def test_human_sees_human_launched_workers(self):
+        self.app.add("session:a", f"rex-agents:{ME}:a")
+        human = self.app.add("session:a", "rex-agents:-:mine")
+        self.assertEqual([w["block"] for w in self.app.status()["workers"]], [human])
+
+    def test_wait_reports_how_the_pane_ended(self):
+        self.agent()
+        ends = {"quit": (0, '{"exit_code":0}\n'), "crashed": (1, '{"exit_code":-1,"error":"signal: killed"}\n'),
+                "closed": (1, '{"block_id":"block:9"}\n')}
+        for name, (code, payload) in ends.items():
+            block = self.app.add("session:a", f"rex-agents:{ME}:{name}")
+            self.app.ends[block] = (code, payload)
+            self.assertEqual(self.app.wait(name), dict(name=name, session="session:a", block=block, ended=json.loads(payload)))
+            self.assertEqual(self.app.calls[-1], ("wait", block, "-s", "session:a", "--json"))
+            self.assertIsNone(self.app.waited)
+
+    def test_wait_on_a_missing_worker_is_gone(self):
+        self.agent()
+        self.app.add("session:a", "rex-agents:feedfacefeedface:w1")
+        self.assertEqual(self.app.wait("w1"), dict(name="w1", gone=True))
+        self.assertFalse([c for c in self.app.calls if c[0] == "wait"])
+        self.app.add("session:a", f"rex-agents:{ME}:w2")  # ends between the listing and the wait
+        self.assertEqual(self.app.wait("w2"), dict(name="w2", gone=True))
+
+    def test_wait_without_a_payload_is_an_error_not_an_exit(self):
+        self.agent()
+        self.app.ends[self.app.add("session:a", f"rex-agents:{ME}:w1")] = (1, "")
+        with self.assertRaises(CommandError):
+            self.app.wait("w1")
+
+    def test_wait_limits_the_connection_but_not_the_wait(self):
+        app = Integration(cache=self.tmp/"cache", server="unix:s")
+        with mock.patch.object(core, "run", return_value="") as run:
+            app.rex("wait", "block:1", timeout=None)
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--timeout") + 1], "10s")
+        self.assertIsNone(run.call_args.kwargs["timeout"])
+
+    def test_failed_command_keeps_its_stdout(self):
+        with self.assertRaises(CommandError) as caught:
+            core.run([sys.executable, "-c", "import sys; print('{\"exit_code\": 7}'); sys.exit(7)"])
+        self.assertEqual(json.loads(caught.exception.stdout), {"exit_code": 7})
+
+    def test_cli_prints_status_and_wait(self):
+        fake = mock.Mock()
+        fake.status.return_value, fake.wait.return_value = dict(workers=[]), dict(name="w1", gone=True)
+        with mock.patch.object(cli, "Integration", return_value=fake), \
+                mock.patch("sys.stdout", new=io.StringIO()) as out:
+            self.assertEqual(cli.main(["status"]), 0)
+            self.assertEqual(cli.main(["wait", "--name", "w1"]), 0)
+        fake.wait.assert_called_with("w1")
+        self.assertIn('"workers": []', out.getvalue())
+        self.assertIn('"gone": true', out.getvalue())
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            cli.main(["wait"])
 
 
 class HookTests(Base):

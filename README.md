@@ -21,7 +21,9 @@ rex-agents cleanup
 
 The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. `--model` is required; an omitted `--effort` inherits native settings. Every worker runs in a pane, even on the driver's own harness. The skill maps short names (sol, terra, astra, opus, fable, sonnet) to model IDs and has the driver choose the effort.
 
-Each worker pane carries the label `rex-agents:<owner>:<name>`, the only worker record. Launches never take focus. An owned worker cannot launch more workers. The driver collects results through Reason, then runs `rex-agents cleanup` before its final answer. Cleanup closes that driver's labeled panes, including unfinished workers. It prints `closed`, `gone`, and `uncertain` JSON and exits 1 on uncertainty.
+Each worker pane carries the label `rex-agents:<owner>:<name>`, the only worker record. Launches never take focus. A worker opens beside the driver, or with `--tab` in a tab of its own, with `--new-session` in a Rex session of its own, or with `--with WORKER` beside another worker. An owned worker cannot launch more workers. The driver collects results through Reason, then runs `rex-agents cleanup` before its final answer. Cleanup closes that driver's labeled panes, including unfinished workers. It prints `closed`, `gone`, and `uncertain` JSON and exits 1 on uncertainty.
+
+A worker that exits sends no message. `rex-agents status` lists the driver's live workers. `rex-agents wait --name NAME` blocks until that worker's pane ends and prints how; a driver runs it as a background command, so the exit wakes it.
 
 When a driver-owned Claude worker opens AskUserQuestion, a hook refuses it and tells the worker to ask its driver through Reason. When a worker blocks on a permission prompt, the hook pops up a Reason notification to the human.
 

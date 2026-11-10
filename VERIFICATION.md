@@ -247,3 +247,46 @@ The suite has 45 tests.
 - `cleanup` closed all five with nothing uncertain. Evidence is in `.verification/grid-tab-2026-11-06/`.
 
 Fixture-only: grids past five panes (3x3 at nine) and the fallback for a tab holding other panes. The suite has 56 tests.
+
+## Status and wait (2026-11-09)
+
+Why: in a 13-hour coordinator session, three worker panes ended without a word, and the driver found out only when its human asked for status. Open PRs went unwatched meanwhile. Why the panes ended is not known.
+
+`status` lists the caller's live workers. `wait --name NAME` blocks on `rex wait` until that worker's pane ends, then prints how. Versions: Rex `0.0.1793645657-gd018d2`, Claude Code `2.1.321`, Reason Network `0.12.17`.
+
+Probes of `rex wait BLOCK --json` on unplaced terminal blocks:
+
+| End | Exit status | stdout |
+|---|---|---|
+| Program exits 0 | 0 | `{"exit_code":0}` |
+| Program exits 7 | 7 | `{"exit_code":7,"error":"exit status 7"}` |
+| Program killed with SIGKILL | 1 | `{"exit_code":-1,"error":"signal: killed"}` |
+| `rex block close` | 1 | `{"block_id":"block:…"}` |
+| Block already gone | 3 | none; stderr `block or window target "…" not found` |
+
+Live run from a Claude driver pane: two idle `claude-haiku-5-5` workers (`--tab`, `--effort low`, no task), each with `wait --name` running as a Claude Code background command.
+
+- `status` listed both with their session and block, and `{"workers": []}` before the launches and after both ended.
+- `kill -9` on the first worker's `claude` process: its wait printed `"ended": {"exit_code": -1, "error": "signal: killed"}` and exited 0. The driver got the background-task notification.
+- `cleanup --name` on the second: its wait printed `"ended": {"block_id": …}` and exited 0. The driver was notified again.
+- `wait --name nope` printed `{"name": "nope", "gone": true}` and exited 0.
+- No pane, tab, or `claude` process was left. Evidence is in `.verification/status-wait-2026-11-09/run.txt`.
+
+Not verified: a Codex worker's exit, a Codex driver (whether its harness wakes it when a background command exits), a Rex server restart during a wait, and the human-shell view of `status`. Fixture-only: a pane that ends between the listing and the wait, and a Rex failure with no payload. The suite has 64 tests.
+
+## A session per worker (2026-11-09)
+
+`launch --new-session` opens the worker in a new Rex session labeled with its name (`session.create`), and `--with WORKER` adds helpers there. Before, a worker could open only in the driver's own session, beside it or in a tab.
+
+Probes: Rex accepts two sessions with one label. A session stays, empty, after its last pane's program exits.
+
+Live run from a Claude driver pane, idle `claude-haiku-5-5` workers (`--effort low`, no task):
+
+- `launch --new-session --name ns-probe` created session `ns-probe` with one window `ns-probe`. `rex capture` on the pane showed Claude Code running as `Haiku 5.5 (low)`.
+- `launch --with ns-probe --name ns-probe-rev` opened in the same session, as a horizontal split at 0.5. `status` listed both with that session.
+- `cleanup --name ns-probe-rev` closed the helper and kept the session. `cleanup --name ns-probe` then closed the worker, and the session was gone from `rex ls`.
+- After `kill -9` on the worker, the session stayed, empty. A second `launch --new-session --name ns-probe` returned the same session ID, and `rex ls` showed one `ns-probe` session, not two.
+- After another `kill -9`, `cleanup --name ns-probe` returned `gone: [{"name": "ns-probe"}]` and the empty session was gone from `rex ls`.
+- No `ns-probe` session or `claude` process was left.
+
+Not verified: whether the Rex app keeps showing the driver's session during the launch (Rex's API reports which sessions a client is attached to, not which one it shows; the app attached to the new session at once), a Codex worker in its own session, and the reworded `KEEP_NAME` hook text, which the probes above did not use. Fixture-only: a same-label session held by another pane is left alone by both launch and cleanup. The suite has 68 tests.

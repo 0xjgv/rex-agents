@@ -29,7 +29,9 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 `--model` is required. An omitted `--effort` inherits native settings. Selectors change no global defaults or permissions. The directory must exist. The launcher creates no worktree. It passes the task once as one argument; nothing evaluates it as shell code. Names use letters, digits, underscores, or hyphens, up to 64 characters.
 
-`--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it in the driver's own worker WORKER's tab. When that tab holds only the driver's workers, as a `--tab` tab does, every pane in it, WORKER included, shares the tab as an equal grid with no more rows than columns: 2 sit side by side, 4 sit 2x2, 5 sit 2+1+2, 9 sit 3x3. Otherwise the worker opens beside WORKER in the same balanced columns as beside the driver. The two options are exclusive. Rex closes a tab with its last pane.
+`--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it in the driver's own worker WORKER's tab. When that tab holds only the driver's workers, as a `--tab` tab does, every pane in it, WORKER included, shares the tab as an equal grid with no more rows than columns: 2 sit side by side, 4 sit 2x2, 5 sit 2+1+2, 9 sit 3x3. Otherwise the worker opens beside WORKER in the same balanced columns as beside the driver. Rex closes a tab with its last pane.
+
+`--new-session` opens the worker in a new Rex session labeled with its name, and Rex attaches no client to it. Use it for long work that gathers helpers: `--with WORKER` opens each helper as a pane in that session. Rex keeps a session after its last pane closes, so a worker that ended on its own leaves its session empty. Launching that name with `--new-session` again moves back into it. The three options are exclusive.
 
 The result returns the session ID, pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
@@ -42,6 +44,25 @@ Workers open in the driver's tab, in balanced columns of up to three on its righ
 3. The driver replies to the message's `from` with `reply_to`. It asks its human before answering a question meant for them.
 4. Delivered or queued does not mean the work finished. Wait for an explicit completion message.
 
+## Watch workers
+
+A worker that exits sends no message: its pane closes and the driver hears nothing. Two commands cover that.
+
+```sh
+rex-agents status              # the driver's live workers: name, session, block
+rex-agents wait --name NAME    # blocks until that worker's pane ends, then prints how
+```
+
+`status` reads the pane labels. A worker missing from it has no pane. To read a worker's screen, pass its IDs to Rex: `rex capture -s SESSION -b BLOCK --trim`.
+
+Run `wait` as a background command of the driver's harness, right after the launch (Claude Code: `run_in_background`). Its exit wakes the driver. It uses `rex wait`, which follows Rex's event stream, so nothing polls and no extra process outlives the driver. It prints the worker's `name`, `session`, and `block`, and one of:
+
+- `"ended": {"exit_code": N}`: the worker's program exited. `-1` with an `error` such as `signal: killed` means a signal ended it.
+- `"ended": {"block_id": ...}`: the pane was closed, as `cleanup` or a person closing the tab does.
+- `"gone": true`: no pane of the driver's carries that name.
+
+It exits 0 in all three cases, and 1 when Rex fails before reporting an end, such as a server restart. Then check `status`. A wait started before a launch does not cover that worker: start one per worker. A driver restart ends its background commands, so start them again from `status`.
+
 ## Close workers
 
 Collect every result first. Then, from the same driver conversation, before its final answer:
@@ -53,6 +74,8 @@ rex-agents cleanup
 Cleanup closes every pane labeled with the driver's owner, including unfinished workers. In-flight work is lost; native transcripts remain. It protects the driver pane and every unlabeled pane. It prints JSON with `closed`, `gone`, and `uncertain`, exits 0 when `uncertain` is empty, otherwise 1. Retrying is safe. Complete cleanup resets the next direction to `right`. Cleanup never closes human-launched panes (`rex-agents:-:<name>`). It also never closes panes from earlier versions, which carry `rex-agents:<uuid>` labels. Close those by hand.
 
 To stop one worker and keep the rest, run `rex-agents cleanup --name NAME`. It applies the same ownership rule to that one name. A name the driver does not own, or one already closed, comes back under `gone`.
+
+Cleanup kills each session it emptied, so a `--new-session` session goes with its last pane. `cleanup --name NAME` on a worker that already ended also kills the empty session labeled NAME.
 
 No Stop or SessionEnd hook runs cleanup. A driver crash leaves panes for manual closing. Claude `/clear` changes the driver's identity, so close older workers by hand.
 

@@ -21,9 +21,13 @@ def parser():
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
     where = launch.add_mutually_exclusive_group()
     where.add_argument("--tab", action="store_true", help="Open the worker in a new tab of the driver's session")
+    where.add_argument("--new-session", action="store_true", help="Open the worker in a new Rex session named after it")
     where.add_argument("--with", dest="beside", metavar="WORKER", help="Open the worker beside your worker WORKER, in its tab")
     cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     cleanup.add_argument("--name", help="Close only this owned worker")
+    commands.add_parser("status", help="List this driver's live workers")
+    wait = commands.add_parser("wait", help="Block until one of this driver's workers ends, then print how")
+    wait.add_argument("--name", required=True)
     commands.add_parser("install")
     commands.add_parser("uninstall")
     hook = commands.add_parser("_hook", help=argparse.SUPPRESS)
@@ -40,11 +44,15 @@ def main(argv=None):
         if args.command == "launch":
             task = Path(args.task_file).read_text() if args.task_file else None
             result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort, tab=args.tab,
-                                beside=args.beside)
+                                beside=args.beside, new_session=args.new_session)
         elif args.command == "cleanup":
             result = app.cleanup(name=args.name)
             print(json.dumps(result, indent=2))
             return int(bool(result["uncertain"]))
+        elif args.command == "status":
+            result = app.status()
+        elif args.command == "wait":
+            result = app.wait(args.name)
         elif args.command in ("install", "uninstall"):
             result = install(remove=args.command == "uninstall")
         elif args.command == "_hook":

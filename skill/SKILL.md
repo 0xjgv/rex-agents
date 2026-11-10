@@ -44,9 +44,15 @@ Write the task to a file, then:
 rex-agents launch --name sol-plan --cwd /absolute/project --model gpt-6.1-sol --effort high --task-file /path/task.txt
 ```
 
-Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is passed once, literally; no worktree is created. The result says `registration: pending`; the worker is ready when it messages you. On `Launch outcome uncertain`, look for its label in `rex block ls --json` before retrying.
+Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is passed once, literally; no worktree is created. The result says `registration: pending`; the worker is ready when it messages you. On `Launch outcome uncertain`, look for its name in `rex-agents status` before retrying.
 
-`--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. Close either kind with `cleanup --name`; a tab closes with its last pane.
+`--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. `--new-session` opens the worker in a new Rex session named after it; add its helpers there with `--with WORKER`. Close any of them with `cleanup --name`; a tab closes with its last pane, and so does a `--new-session` session, even when its worker had already ended.
+
+## Watch
+
+A worker that exits sends no message. For a worker you keep across turns, run `rex-agents wait --name NAME` as a background command right after its launch (Claude Code: `run_in_background`). It blocks until that worker's pane ends, and its exit wakes you. It prints `ended` with an `exit_code` when the worker's program exited, `ended` with only a `block_id` when the pane was closed, as `cleanup` does, or `gone` when no pane of yours has that name. On an end you did not cause, tell the user, and relaunch the worker if its work is still owed.
+
+`rex-agents status` lists your live workers with their session and block. A worker missing from it has no pane. Read a worker's screen with `rex capture -s SESSION -b BLOCK --trim`.
 
 ## Collaborate
 
@@ -56,7 +62,7 @@ Every task states:
 2. The goal, files, constraints, and the shape of the answer you want.
 3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished, with each command you ran and its exit code or output.
 
-Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher. Never poll or read another conversation's inbox.
+Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher for results. Never poll or read another conversation's inbox.
 
 For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Each worker owns its task and may split it among its own native subagents; their questions reach you through the worker.
 
