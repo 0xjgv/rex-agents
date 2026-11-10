@@ -192,6 +192,10 @@ class Fake(Integration):
         raise AssertionError(args)
 
 
+# Words that tie a worker to one channel to its driver; the driver's task names the channel.
+NEUTRAL = ("Reason", "MCP", "send_message", "address")
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -252,6 +256,34 @@ class LaunchTests(Base):
                          ["/bin/agent", "--no-daemon", "-c",
                           f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}',
                           "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'])
+
+    def test_env_prefixes_claude_argv(self):
+        self.agent()
+        base = ["/bin/agent", "--name", "w", "--model", "claude-opus-5-5"]
+        for i, (env, prefix) in enumerate(((None, []), ([], []), (["A=1"], ["/usr/bin/env", "A=1"]),
+                                           (["LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"],
+                                            ["/usr/bin/env", "LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"]))):
+            with self.subTest(env=env):
+                self.launch(f"w{i}", env=env)
+                self.assertEqual(self.argv(self.app.splits()[-1]), [*prefix, *base[:2], f"w{i}", *base[3:]])
+
+    def test_env_prefixes_codex_argv_and_sets_tool_shells(self):
+        self.agent()
+        trust = ["-c", f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}']
+        base = ["/bin/agent", "--no-daemon", *trust, "-m", "gpt-6.1-sol"]
+        for i, (env, prefix, sets) in enumerate((
+                (None, [], []), (["A=1"], ["/usr/bin/env", "A=1"], ["-c", 'shell_environment_policy.set.A="1"']),
+                (["LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"], ["/usr/bin/env", "LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"],
+                 ["-c", 'shell_environment_policy.set.LEDGER_DIR="/a b/c"',
+                  "-c", 'shell_environment_policy.set.LEDGER_AS="x=y"']))):
+            with self.subTest(env=env):
+                self.launch(f"w{i}", model="gpt-6.1-sol", env=env, task="go")
+                argv = self.argv(self.app.splits()[-1])
+                self.assertEqual(argv, [*prefix, *base, *sets, "--", "go"])
+                for flag, value in zip(argv, argv[1:]):
+                    if flag == "-c" and value.startswith("shell"):
+                        key, _, rest = value.partition("=")
+                        self.assertEqual(tomllib.loads("v=" + rest)["v"], dict(e.split("=", 1) for e in env)[key[29:]])
 
     def test_codex_trust_quotes_directory_as_a_toml_key(self):
         self.cwd = self.tmp/'work space.and "quotes" \\ 雪😀'
@@ -325,7 +357,10 @@ class LaunchTests(Base):
     def test_invalid_input_rejected_before_rex(self):
         self.agent()
         for kw in ({"name": "bad name"}, {"name": "x" * 65}, {"name": "w", "model": "a b"},
-                   {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"}):
+                   {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"},
+                   {"name": "w", "env": ["A"]}, {"name": "w", "env": ["=1"]}, {"name": "w", "env": ["1A=1"]},
+                   {"name": "w", "env": ["A-B=1"]}, {"name": "w", "env": ["A=1\n"]}, {"name": "w", "env": ["A=\0"]},
+                   {"name": "w", "model": "gpt-6.1-sol", "env": ["A=x\ny"]}):
             name = kw.pop("name")
             with self.assertRaises(Error):
                 self.launch(name, **kw)
@@ -343,6 +378,13 @@ class LaunchTests(Base):
             self.assertEqual(cli.main([*argv, "--model", "gpt-6-astra"]), 0)
         self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-c",
                          f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}', "-m", "gpt-6-astra"])
+
+    def test_cli_launch_repeats_env(self):
+        self.agent()
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"):
+            self.assertEqual(cli.main(["launch", "--name", "w1", "--cwd", str(self.cwd), "--model", "claude-opus-5-5",
+                                       "--env", "A=1", "--env", "B=2 3"]), 0)
+        self.assertEqual(self.argv(self.app.splits()[0])[:3], ["/usr/bin/env", "A=1", "B=2 3"])
 
     def test_cli_launch_defaults_cwd_to_current_directory(self):
         self.agent()
@@ -544,6 +586,21 @@ class LaunchTests(Base):
         self.assertIn(session, self.app.sessions)  # the worker still holds it
         self.app.cleanup(name="t1")
         self.assertEqual(sorted(self.app.sessions), ["session:a"])
+
+    def test_env_reaches_every_launch_mode(self):
+        self.agent()
+        env = ["LEDGER_DIR=/l d", "LEDGER_AS=t1"]
+        argv = ["/usr/bin/env", *env, "/bin/agent", "--no-daemon", "-c",
+                f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}', "-m", "gpt-6.1-sol",
+                "-c", 'shell_environment_policy.set.LEDGER_DIR="/l d"', "-c", 'shell_environment_policy.set.LEDGER_AS="t1"']
+        for name, kw, method in (("t1", dict(new_session=True), "session.create"), ("t2", dict(tab=True), "session.new_window"),
+                                 ("h1", dict(beside="t1"), "session.new_split"), ("w1", {}, "session.new_split")):
+            with self.subTest(**kw):
+                self.launch(name, model="gpt-6.1-sol", env=env, **kw)
+                request = self.app.requests[-1]
+                layout = request["initial_windows"][0]["layout"] if method == "session.create" else request["layout"]
+                self.assertEqual(self.app.calls[-1], ("api", "call", method, "-"))
+                self.assertEqual(layout["block"]["options"]["command"], argv)
 
     def test_relaunch_moves_back_into_the_session_its_worker_left_empty(self):
         self.agent()
@@ -800,6 +857,9 @@ class HookTests(Base):
         context = self.app.hook("codex", "SessionStart", {"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
         self.assertIn("subagents", context)
         self.assertIn("final reply", context)
+        self.assertIn("driver the way your task says", context)
+        for word in NEUTRAL:
+            self.assertNotIn(word, context)
         self.app.sessions["session:a"][-1]["label"] = "rex-agents:-:helper"
         context = self.app.hook("codex", "SessionStart", {"session_id": "s1"})["hookSpecificOutput"]["additionalContext"]
         self.assertNotIn("subagents", context)
@@ -831,7 +891,9 @@ class HookTests(Base):
                                    "tool_input": {"questions": [{"question": "Ship?", "options": [{"label": "Yes"}]}]}})
             decision = result["hookSpecificOutput"]
             self.assertEqual((decision["hookEventName"], decision["permissionDecision"]), ("PreToolUse", "deny"))
-            self.assertIn("send_message", decision["permissionDecisionReason"])
+            self.assertIn("driver the way your task says", decision["permissionDecisionReason"])
+            for word in NEUTRAL:
+                self.assertNotIn(word, decision["permissionDecisionReason"])
         self.assertEqual(self.sent, [])
 
     def test_subagent_question_returns_to_task_owner(self):
@@ -841,7 +903,7 @@ class HookTests(Base):
             decision = result["hookSpecificOutput"]
             self.assertEqual(decision["permissionDecision"], "deny")
             self.assertIn("final reply", decision["permissionDecisionReason"])
-            self.assertNotIn("send_message", decision["permissionDecisionReason"])
+            self.assertNotIn("driver the way your task says", decision["permissionDecisionReason"])
         self.assertEqual(self.sent, [])
 
     def test_subagent_permission_prompt_alerts_human(self):

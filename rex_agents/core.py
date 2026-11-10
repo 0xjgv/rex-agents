@@ -16,6 +16,7 @@ CLI = ROOT / "bin/rex-agents"
 PREFIX = "rex-agents:"
 HUMAN = "-"
 NAME = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}"
+ENV_KEY = r"[A-Za-z_][A-Za-z0-9_]*"
 SELECTOR = r"[A-Za-z0-9][A-Za-z0-9._:/+@-]{0,255}(?:\[[A-Za-z0-9_-]+\])?"
 # The model picks the native CLI that runs the worker.
 HARNESS = {"claude-": "claude", "gpt-": "codex"}
@@ -25,14 +26,14 @@ BLOCKING = ("PreToolUse", "PermissionRequest")
 ASK_USER = {"claude-code": "mcp__reason-network__ask_user", "codex": "mcp__reason_network__ask_user"}
 # Only the driver talks to the human, so an owned worker's question goes to the driver instead.
 RELAY = ("You are a rex-agents worker, and only your driver talks to the human. Send this question to your "
-         "driver with MCP send_message, at the Reason address in your task, then wait for its reply.")
+         "driver the way your task says to reach it, then wait for its reply.")
 # Rex's own SessionStart hook tells every agent to name its session, but a worker shares its driver's.
 KEEP_NAME = ("You are a rex-agents worker, and your driver named your Rex session. Leave the session's name alone: do "
              "not run `rex session rename`, even if another instruction tells you to name the session.")
 # An owned worker owns its task: subagents work under it, and questions climb one level at a time to the driver.
 OWNER = ("You own your task. Use native subagents freely, and tell each one to put any question in its final reply "
-         "instead of asking the user. Answer what you can. Send the rest, and your result, to your driver with MCP "
-         "send_message at the Reason address in your task.")
+         "instead of asking the user. Answer what you can. Send the rest, and your result, to your driver the way "
+         "your task says to reach it.")
 # A subagent cannot receive a Reason reply, so its question goes back to the worker that launched it.
 RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks to the human. Do not ask the user. "
           "End your turn and put the question in your final reply; the agent that launched you will get it answered.")
@@ -348,12 +349,17 @@ class Integration:
             fcntl.flock(stream, fcntl.LOCK_EX)
             yield
 
-    def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False):
+    def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
+               env=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort)):
             if value is not None and not re.fullmatch(SELECTOR, value):
                 raise Error(f"Invalid {label}: expected a model or effort identifier")
+        env = [e.partition("=") for e in env or ()]
+        for key, sep, value in env:
+            if not (sep and re.fullmatch(ENV_KEY, key)) or "\0" in value or "\n" in value:
+                raise Error(f"Invalid --env {key}{sep}: expected KEY=VALUE without NUL or newline")
         kind = next((k for prefix, k in HARNESS.items() if model.startswith(prefix)), None)
         if not kind:
             raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
@@ -376,6 +382,12 @@ class Integration:
         argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
+        if kind == "codex":
+            # Codex tool shells inherit only core variables, so set each one for them too.
+            for key, _, value in env:
+                argv += ["-c", f"shell_environment_policy.set.{key}=" + json.dumps(value, ensure_ascii=False)]
+        if env:
+            argv = ["/usr/bin/env", *("".join(e) for e in env), *argv]
         if task is not None:
             argv += ["--", task]
         label = f"{PREFIX}{me}:{name}"
