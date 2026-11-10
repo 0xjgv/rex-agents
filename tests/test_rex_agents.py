@@ -235,7 +235,8 @@ class LaunchTests(Base):
         result = self.launch("w1", task=task, model="claude-opus-5-5", effort="xhigh")
         request = self.app.splits()[0]
         self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_split", "-"))
-        self.assertEqual(self.argv(request), ["/bin/agent", "--name", "w1", "--model", "claude-opus-5-5",
+        self.assertEqual(self.argv(request), ["/bin/agent", "--name", "w1", "--settings",
+                                              '{"crossSessionInbound":"accept"}', "--model", "claude-opus-5-5",
                                               "--effort", "xhigh", "--", task])
         self.assertEqual(self.block(request)["options"]["cwd"], str(self.cwd.resolve()))
         self.assertEqual(self.block(request)["options"]["path_prepend"], ["/caller/bin", "/usr/bin"])

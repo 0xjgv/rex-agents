@@ -370,6 +370,9 @@ class Integration:
         if kind == "codex":
             # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
             argv += ["-c", "projects={" + json.dumps(str(directory), ensure_ascii=False) + '={trust_level="trusted"}}']
+        else:
+            # A worker that prompts for permissions holds a bypass-mode driver's SendMessage until it accepts them.
+            argv += ["--settings", '{"crossSessionInbound":"accept"}']
         argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]

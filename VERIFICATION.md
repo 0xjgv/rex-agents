@@ -290,3 +290,15 @@ Live run from a Claude driver pane, idle `claude-haiku-5-5` workers (`--effort l
 - No `ns-probe` session or `claude` process was left.
 
 Not verified: whether the Rex app keeps showing the driver's session during the launch (Rex's API reports which sessions a client is attached to, not which one it shows; the app attached to the new session at once), a Codex worker in its own session, and the reworded `KEEP_NAME` hook text, which the probes above did not use. Fixture-only: a same-label session held by another pane is left alone by both launch and cleanup. The suite has 68 tests.
+
+## Claude workers accept their driver's messages (2026-11-10)
+
+`launch` starts a Claude worker with `--settings '{"crossSessionInbound":"accept"}'`. Before, the worker ran with no value, so Claude Code decided by permission mode, and a worker that prompts held every `SendMessage` from a bypass-mode driver.
+
+Live run from a Claude driver pane in bypass mode (`--dangerously-skip-permissions`), idle `claude-haiku-5-5` workers in auto mode (`--effort low`). Versions: Claude Code `2.1.322`.
+
+- Before the change, the driver's `SendMessage` to the worker was not delivered. The worker's pane showed `Held peer message … not delivered to Claude (1 held). The sending session's permission mode class doesn't match this session's.` and waited on a `Deny` / `Deliver` prompt.
+- After it, the worker's process line was `claude --name xs-probe-accept --settings {"crossSessionInbound":"accept"} --model claude-haiku-5-5 --effort low -- …`. The same message started a turn in the idle worker: `› Message from @utils-47: PROBE: …`, then the worker's answer.
+- A third worker, told to answer with `SendMessage`, replied to the driver, whose own session sets `accept`.
+
+Not verified: a Codex driver or worker (Codex has no `SendMessage`), a driver that does not set `accept` itself, and a worker in another permission mode than auto. The suite has 68 tests.
