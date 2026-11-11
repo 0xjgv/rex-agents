@@ -333,3 +333,15 @@ Live run from a Claude driver pane on `CLAUDE_CONFIG_DIR=~/.claude-work` in bypa
 - `cleanup --name` closed the worker and its session.
 
 Not verified: a Codex worker under a driver with `CLAUDE_CONFIG_DIR` set (it should take nothing; unit-tested only), and a driver on the default `~/.claude`. The suite has 75 tests.
+
+## Launch passes a permission mode to Claude workers (2026-11-11)
+
+`launch --permission-mode MODE` adds `--permission-mode MODE` to a Claude worker's argv. Before, a worker always started in its settings' mode, so a worker in auto mode under a bypass-mode driver could stop on a permission prompt that only the human could answer.
+
+Live run from a Claude driver pane on `CLAUDE_CONFIG_DIR=~/.claude-work` in bypass mode, from this branch's `bin/rex-agents`, without reinstalling. One `claude-haiku-5-5` worker (`--effort low`, `--new-session`, `--permission-mode bypassPermissions`) in a new scratch directory. Versions: Claude Code `2.1.322`.
+
+- The worker's process line was `claude --name pm-probe --settings {"crossSessionInbound":"accept"} --model claude-haiku-5-5 --effort low --permission-mode bypassPermissions -- …`.
+- Its footer showed `bypass permissions on`. It read `/etc/hosts`, outside its directory, with the Read tool and ran `sw_vers` with no prompt.
+- `cleanup --name` closed the worker and its session.
+
+Fixture-only: the refusal for a `gpt-*` model and for a malformed mode. Not verified: modes other than `bypassPermissions`. The suite has 76 tests.

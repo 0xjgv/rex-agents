@@ -350,16 +350,16 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None):
+               env=None, permission_mode=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         # Bare --new-session names the session after the worker; a label lets several workers share one.
         session_label = name if new_session is True else new_session
         if session_label is not False and not re.fullmatch(NAME, session_label):
             raise Error("Session label must be 1–64 letters, digits, underscores, or hyphens")
-        for label, value in (("model", model), ("effort", effort)):
+        for label, value in (("model", model), ("effort", effort), ("permission mode", permission_mode)):
             if value is not None and not re.fullmatch(SELECTOR, value):
-                raise Error(f"Invalid {label}: expected a model or effort identifier")
+                raise Error(f"Invalid {label}: expected a model, effort, or permission mode identifier")
         env = [e.partition("=") for e in env or ()]
         for key, sep, value in env:
             if not (sep and re.fullmatch(ENV_KEY, key)) or "\0" in value or "\n" in value:
@@ -367,6 +367,8 @@ class Integration:
         kind = next((k for prefix, k in HARNESS.items() if model.startswith(prefix)), None)
         if not kind:
             raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
+        if permission_mode is not None and kind != "claude":
+            raise Error("--permission-mode applies to Claude workers only")
         # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
         config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
         if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
@@ -390,6 +392,8 @@ class Integration:
         argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
+        if permission_mode is not None:
+            argv += ["--permission-mode", permission_mode]
         if kind == "codex":
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:

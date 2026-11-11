@@ -257,6 +257,15 @@ class LaunchTests(Base):
                           f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}',
                           "-m", "gpt-6.1-sol", "-c", 'model_reasoning_effort="high"'])
 
+    def test_permission_mode_reaches_claude_only(self):
+        self.agent()
+        self.launch("w1", effort="low", permission_mode="bypassPermissions")
+        self.assertEqual(self.argv(self.app.splits()[0])[-4:],
+                         ["--effort", "low", "--permission-mode", "bypassPermissions"])
+        with self.assertRaises(Error):
+            self.launch("w2", model="gpt-6.1-sol", permission_mode="bypassPermissions")
+        self.assertEqual(len(self.app.splits()), 1)
+
     def test_env_prefixes_claude_argv(self):
         self.agent()
         base = ["/bin/agent", "--name", "w", "--settings", '{"crossSessionInbound":"accept"}', "--model",
@@ -376,6 +385,7 @@ class LaunchTests(Base):
         self.agent()
         for kw in ({"name": "bad name"}, {"name": "x" * 65}, {"name": "w", "model": "a b"},
                    {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"},
+                   {"name": "w", "permission_mode": "a b"},
                    {"name": "w", "env": ["A"]}, {"name": "w", "env": ["=1"]}, {"name": "w", "env": ["1A=1"]},
                    {"name": "w", "env": ["A-B=1"]}, {"name": "w", "env": ["A=1\n"]}, {"name": "w", "env": ["A=\0"]},
                    {"name": "w", "model": "gpt-6.1-sol", "env": ["A=x\ny"]}):
