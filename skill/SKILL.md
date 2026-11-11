@@ -15,7 +15,7 @@ Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex
 | Name | Model | Runs in |
 |---|---|---|
 | opus | `claude-opus-5-5` | Claude Code |
-| fable | `claude-fable-5-1` | Claude Code |
+| fable | `claude-fable-5-2` | Claude Code |
 | sonnet | `claude-sonnet-5-5` | Claude Code |
 | haiku | `claude-haiku-5-5` | Claude Code |
 | sol | `gpt-6.1-sol` | Codex |
