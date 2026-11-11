@@ -31,7 +31,7 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 `--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it in the driver's own worker WORKER's tab. When that tab holds only the driver's workers, as a `--tab` tab does, every pane in it, WORKER included, shares the tab as an equal grid with no more rows than columns: 2 sit side by side, 4 sit 2x2, 5 sit 2+1+2, 9 sit 3x3. Otherwise the worker opens beside WORKER in the same balanced columns as beside the driver. Rex closes a tab with its last pane.
 
-`--new-session` opens the worker in a new Rex session labeled with its name, and Rex attaches no client to it. Use it for long work that gathers helpers: `--with WORKER` opens each helper as a pane in that session. Rex keeps a session after its last pane closes, so a worker that ended on its own leaves its session empty. Launching that name with `--new-session` again moves back into it. The three options are exclusive.
+`--new-session` opens the worker in a new Rex session labeled with its name, and Rex attaches no client to it. Use it for long work that gathers helpers: `--with WORKER` opens each helper as a pane in that session. Rex keeps a session after its last pane closes, so a worker that ended on its own leaves its session empty. Launching that name with `--new-session` again moves back into it. `--new-session LABEL` labels the session LABEL instead, so workers launched with the same LABEL each get a tab in one session; the window still carries the worker's name. The three options are exclusive.
 
 The result returns the session ID, pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
@@ -75,7 +75,7 @@ Cleanup closes every pane labeled with the driver's owner, including unfinished 
 
 To stop one worker and keep the rest, run `rex-agents cleanup --name NAME`. It applies the same ownership rule to that one name. A name the driver does not own, or one already closed, comes back under `gone`.
 
-Cleanup kills each session it emptied, so a `--new-session` session goes with its last pane. `cleanup --name NAME` on a worker that already ended also kills the empty session labeled NAME.
+Cleanup kills each session it emptied, so a `--new-session` session goes with its last pane. `cleanup --name NAME` on a worker that already ended also kills the empty session labeled NAME. A shared `--new-session LABEL` session goes when cleanup closes its last live worker, but if its last worker ended on its own it stays, empty, until the next launch with that LABEL moves back in.
 
 No Stop or SessionEnd hook runs cleanup. A driver crash leaves panes for manual closing. Claude `/clear` changes the driver's identity, so close older workers by hand.
 

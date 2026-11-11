@@ -353,6 +353,10 @@ class Integration:
                env=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
+        # Bare --new-session names the session after the worker; a label lets several workers share one.
+        session_label = name if new_session is True else new_session
+        if session_label is not False and not re.fullmatch(NAME, session_label):
+            raise Error("Session label must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort)):
             if value is not None and not re.fullmatch(SELECTOR, value):
                 raise Error(f"Invalid {label}: expected a model or effort identifier")
@@ -421,13 +425,13 @@ class Integration:
                 # Its relaunch moves back in, unless a pane that is not the caller's worker holds the session now.
                 taken = {b["session"] for b in blocks if (parse(b.get("label")) or (None,))[0] != me}
                 session = next((s["session_id"] for s in decode(self.rex("ls", "--json")).get("sessions", [])
-                                if s.get("label") == name and s["session_id"] not in taken), None)
+                                if s.get("label") == session_label and s["session_id"] not in taken), None)
             if new_session and not session:
-                # A Rex session of its own, named after the worker. Rex attaches no client to it, so focus stays put.
+                # A Rex session named after the worker or the label. Rex attaches no client to it, so focus stays put.
                 method, moved, widen = "session.create", None, False
-                request = dict(label=name, initial_windows=[dict(window_label=name, layout=layout)])
+                request = dict(label=session_label, initial_windows=[dict(window_label=name, layout=layout)])
             elif tab or new_session:
-                # A tab of its own, named after the worker, in the driver's session or the worker's old one.
+                # A tab of its own, named after the worker, in the driver's session or one with the session label.
                 method, moved, widen = "session.new_window", None, False
                 request = dict(session_id=session, window_label=name, focus=False, layout=layout)
             else:

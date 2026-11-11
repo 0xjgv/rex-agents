@@ -568,6 +568,9 @@ class LaunchTests(Base):
                 cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", place, "--with", "t1"])
         args = cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", "--with", "t1"])
         self.assertEqual((args.tab, args.new_session, args.beside), (False, False, "t1"))
+        for extra, value in (([], False), (["--new-session"], True), (["--new-session", "cos"], "cos")):
+            args = cli.parser().parse_args(["launch", "--name", "x", "--model", "claude-opus-5-5", *extra])
+            self.assertEqual(args.new_session, value)
 
     def test_new_session_gives_the_worker_and_its_helpers_a_session_of_their_own(self):
         self.agent()
@@ -587,6 +590,35 @@ class LaunchTests(Base):
         self.assertIn(session, self.app.sessions)  # the worker still holds it
         self.app.cleanup(name="t1")
         self.assertEqual(sorted(self.app.sessions), ["session:a"])
+
+    def test_new_session_label_gives_each_worker_a_tab_in_one_session(self):
+        self.agent()
+        first = self.launch("t1", new_session="cos")
+        request = self.app.requests[-1]
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.create", "-"))
+        self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]), ("cos", "t1"))
+        second = self.launch("t2", new_session="cos")
+        request = self.app.requests[-1]
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_window", "-"))
+        self.assertEqual((second["session_id"], request["window_label"], request["focus"]),
+                         (first["session_id"], "t2", False))
+        h1 = self.launch("h1", beside="t2")["block_ids"][0]  # a helper joins t2's tab
+        self.assertEqual((self.app.requests[-1]["session_id"], self.placed()),
+                         (first["session_id"], (second["block_ids"][0], "horizontal", 1 / 2)))
+        self.assertNotIn(h1, (first["block_ids"][0], second["block_ids"][0]))
+        # A session with that label that holds a pane that is not the caller's worker is left alone.
+        self.app.names["session:b"] = "shared"
+        self.app.add("session:b")
+        self.launch("t3", new_session="shared")
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.create", "-"))
+        self.assertEqual(self.app.requests[-1]["label"], "shared")
+
+    def test_invalid_new_session_label_is_refused_before_rex(self):
+        self.agent()
+        for label in ("", "-x", "a b", "x" * 65):
+            with self.subTest(label=label), self.assertRaisesRegex(Error, "Session label"):
+                self.launch("t1", new_session=label)
+        self.assertEqual(self.app.calls, [])
 
     def test_env_reaches_every_launch_mode(self):
         self.agent()

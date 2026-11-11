@@ -302,3 +302,11 @@ Live run from a Claude driver pane in bypass mode (`--dangerously-skip-permissio
 - A third worker, told to answer with `SendMessage`, replied to the driver, whose own session sets `accept`.
 
 Not verified: a Codex driver or worker (Codex has no `SendMessage`), a driver that does not set `accept` itself, and a worker in another permission mode than auto. The suite has 68 tests.
+
+## Workers share a labeled session (2026-11-11)
+
+`launch --new-session LABEL` labels the new session LABEL instead of the worker's name; the window keeps the worker's name. A later launch with the same LABEL opens an unfocused window (`session.new_window`) in that session, if it holds no pane but the caller's workers. Bare `--new-session` is unchanged. LABEL must match the worker-name pattern and is checked before any Rex call.
+
+Cleanup is unchanged. `cleanup --name` of the last live worker empties the shared session and kills it. A shared session whose last worker ended on its own stays, empty, until the next launch with that LABEL moves back in; `cleanup --name` kills only an empty session labeled with the worker's name.
+
+Fixture-only: no live run yet. The suite has 74 tests.
