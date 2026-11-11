@@ -320,3 +320,16 @@ Live run from a Claude driver pane (driver in Rex session `lab`, `CLAUDE_CONFIG_
 - `cleanup --name probe-b` returned `closed: [probe-b]`, exit 0; no session labeled `cos-probe` remained.
 
 Fixture-only: reuse refused when the labeled session holds a foreign pane, `--with` inside a shared session, a shared session left empty by a worker that ended on its own, a Codex worker, and a human launch. The suite has 74 tests.
+
+## Claude workers run on their driver's config dir (2026-11-11)
+
+`launch` gives a Claude worker the driver's `CLAUDE_CONFIG_DIR`, unless `--env` sets one, and `trust_claude` writes that directory's `.claude.json`. Before, the pane started on `~/.claude` whatever the driver ran on, and only `~/.claude.json` was trusted.
+
+Live run from a Claude driver pane on `CLAUDE_CONFIG_DIR=~/.claude-work` in bypass mode, with `rex-agents install` run for that directory. One `claude-haiku-5-5` worker (`--effort low`, `--new-session`) in a new scratch directory. Versions: Claude Code `2.1.322`.
+
+- The trust entry for the worker's directory landed in `~/.claude-work/.claude.json` and not in `~/.claude.json`. The worker opened with no trust dialog, in auto mode, and its transcript is under `~/.claude-work/projects/`.
+- Its `AskUserQuestion` call was refused with the channel-neutral `RELAY`: `… Send this question to your driver the way your task says to reach it, then wait for its reply.`
+- Its task named the driver's session and `SendMessage`. It sent `QUESTION: …` to the driver, ended its turn, took the driver's `SendMessage` answer, and sent `DONE: …`.
+- `cleanup --name` closed the worker and its session.
+
+Not verified: a Codex worker under a driver with `CLAUDE_CONFIG_DIR` set (it should take nothing; unit-tested only), and a driver on the default `~/.claude`. The suite has 75 tests.

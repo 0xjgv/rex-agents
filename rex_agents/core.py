@@ -105,9 +105,9 @@ def working_directory(cwd):
     return directory
 
 
-def trust_claude(directory):
+def trust_claude(directory, config=None):
     # Claude re-reads under its mkdir/heartbeat lock; this atomic write can still race an in-flight save.
-    path = Path.home()/".claude.json"
+    path = (Path(config).expanduser() if config else Path.home())/".claude.json"
     try:
         text = path.read_text(encoding="utf-8")
         config = json.loads(text)
@@ -367,6 +367,10 @@ class Integration:
         kind = next((k for prefix, k in HARNESS.items() if model.startswith(prefix)), None)
         if not kind:
             raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
+        # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
+        config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
+        if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
+            env.append(("CLAUDE_CONFIG_DIR", "=", config))
         directory = working_directory(cwd)
         # The pane runs the login shell's environment, which may lack the caller's PATH.
         executable = shutil.which(kind)
@@ -411,7 +415,7 @@ class Integration:
                 if anchor is None:
                     raise Error(f"No worker {beside} of yours to open beside")
             if kind == "claude":
-                trust_claude(directory)
+                trust_claude(directory, config)
             mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
                     and b["block_id"] != anchor["block_id"]
                     and b["session"] == anchor["session"] and b.get("window_id") == anchor.get("window_id")]

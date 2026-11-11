@@ -268,6 +268,23 @@ class LaunchTests(Base):
                 self.launch(f"w{i}", env=env)
                 self.assertEqual(self.argv(self.app.splits()[-1]), [*prefix, *base[:2], f"w{i}", *base[3:]])
 
+    def test_claude_worker_runs_on_its_drivers_config_dir(self):
+        self.agent()
+        work, other = self.tmp/"claude-work", self.tmp/"other"
+        os.environ["CLAUDE_CONFIG_DIR"] = str(work)
+        self.launch("w1")
+        request = self.app.splits()[-1]
+        self.assertEqual(self.argv(request)[:3], ["/usr/bin/env", f"CLAUDE_CONFIG_DIR={work}", "/bin/agent"])
+        trusted = {"projects": {self.block(request)["options"]["cwd"]: {"hasTrustDialogAccepted": True}}}
+        self.assertEqual(json.loads((work/".claude.json").read_text()), trusted)
+        self.assertFalse((self.home/".claude.json").exists())
+        # An explicit --env wins, and a Codex worker takes nothing from the driver.
+        self.launch("w2", env=[f"CLAUDE_CONFIG_DIR={other}"])
+        self.assertEqual(self.argv(self.app.splits()[-1])[:3], ["/usr/bin/env", f"CLAUDE_CONFIG_DIR={other}", "/bin/agent"])
+        self.assertEqual(json.loads((other/".claude.json").read_text()), trusted)
+        self.launch("w3", model="gpt-6.1-sol")
+        self.assertEqual(self.argv(self.app.splits()[-1])[0], "/bin/agent")
+
     def test_env_prefixes_codex_argv_and_sets_tool_shells(self):
         self.agent()
         trust = ["-c", f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}']
