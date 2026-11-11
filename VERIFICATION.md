@@ -302,3 +302,21 @@ Live run from a Claude driver pane in bypass mode (`--dangerously-skip-permissio
 - A third worker, told to answer with `SendMessage`, replied to the driver, whose own session sets `accept`.
 
 Not verified: a Codex driver or worker (Codex has no `SendMessage`), a driver that does not set `accept` itself, and a worker in another permission mode than auto. The suite has 68 tests.
+
+## Workers share a labeled session (2026-11-11)
+
+`launch --new-session LABEL` labels the new session LABEL instead of the worker's name; the window keeps the worker's name. A later launch with the same LABEL opens an unfocused window (`session.new_window`) in that session, if it holds no pane but the caller's workers. Bare `--new-session` is unchanged. LABEL must match the worker-name pattern and is checked before any Rex call.
+
+Cleanup is unchanged. `cleanup --name` of the last live worker empties the shared session and kills it. A shared session whose last worker ended on its own stays, empty, until the next launch with that LABEL moves back in; `cleanup --name` kills only an empty session labeled with the worker's name.
+
+Live run from a Claude driver pane (driver in Rex session `lab`, `CLAUDE_CONFIG_DIR=~/.claude-work`), idle `claude-haiku-5-5` workers (`--effort low`, no task), at commit 8f7bc34:
+
+- `launch --new-session cos-probe --name probe-a`, then the same with `--name probe-b`. Both returned the same `session_id` (…d27229) and different `window_id`s (…04c684, …76f1bc).
+- `rex session ls` showed one session labeled `cos-probe`. `rex window ls -s cos-probe` showed windows `probe-a` and `probe-b`, one block each.
+- `rex window ls -s lab` was byte-identical before and after the two launches, so the driver's session kept its active window.
+- `rex capture` on probe-b's pane showed a started Claude prompt: `Haiku 5.5 (low)`, title `probe-b`.
+- `status` listed both probes with that one session.
+- `cleanup --name probe-a` returned `closed: [probe-a]`, exit 0; session `cos-probe` stayed with window `probe-b` only.
+- `cleanup --name probe-b` returned `closed: [probe-b]`, exit 0; no session labeled `cos-probe` remained.
+
+Fixture-only: reuse refused when the labeled session holds a foreign pane, `--with` inside a shared session, a shared session left empty by a worker that ended on its own, a Codex worker, and a human launch. The suite has 74 tests.

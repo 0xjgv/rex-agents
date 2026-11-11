@@ -22,7 +22,8 @@ def parser():
     launch.add_argument("--env", action="append", metavar="KEY=VALUE", help="Set a worker variable; repeatable")
     where = launch.add_mutually_exclusive_group()
     where.add_argument("--tab", action="store_true", help="Open the worker in a new tab of the driver's session")
-    where.add_argument("--new-session", action="store_true", help="Open the worker in a new Rex session named after it")
+    where.add_argument("--new-session", nargs="?", const=True, default=False, metavar="LABEL",
+                       help="Open the worker in a tab of the Rex session LABEL, created if needed; LABEL defaults to the worker's name")
     where.add_argument("--with", dest="beside", metavar="WORKER", help="Open the worker beside your worker WORKER, in its tab")
     cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     cleanup.add_argument("--name", help="Close only this owned worker")
