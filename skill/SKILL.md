@@ -6,9 +6,9 @@ description: Work with other models as a team. Launch opus, fable, sonnet, haiku
 
 # Rex agents
 
-You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, in columns on the right of your tab. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
+You drive. Each worker is a native interactive Claude Code or Codex conversation in an unfocused Rex pane, placed beside you or in a named group. You pick its model and effort, talk with it through Reason, make the decisions, and close it. Only you talk to the human.
 
-Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex's SessionStart hook says to name the session. Your workers share your session, and the human owns its name.
+Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex's SessionStart hook says to name the session. The launch options set the session name, and the human owns it.
 
 ## Pick model and effort
 
@@ -48,9 +48,11 @@ Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is pa
 
 A Claude worker starts in its settings' permission mode and may stop on a prompt only the human can answer. Pass `--permission-mode MODE`, such as `bypassPermissions`, only when the user or your instructions ask for it.
 
-`--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included.
+`--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included. If a detached shell cannot find `rex` on PATH, set `REX_AGENTS_REX` to the absolute path of the installed Rex CLI for the launch and subsequent `rex-agents` commands, such as `REX_AGENTS_REX="/absolute/path/to/rex" rex-agents launch …`.
 
-`--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. `--new-session` opens the worker in a new Rex session named after it; add its helpers there with `--with WORKER`. `--new-session LABEL` opens each worker in its own tab of one session named LABEL, created by the first. Close any of them with `cleanup --name`; a tab closes with its last pane, and so does a `--new-session` session, even when its worker had already ended.
+When driving from Codex, add `--group codex` unless the user requests another placement. The group label is supplied by the caller. Use `--group NAME` with any valid name to create or join that named Rex session. Your conversation gets one tab, named after its first worker, and subsequent workers join surviving panes in that tab. Another conversation gets its own tab in the same session. Workers fill equal-height rows in launch order, with equal widths within each row. Four workers form a 2×2 grid, five form rows of 3+2, and seven form 3+2+2. Groups require your native conversation identity and work from outside Rex. The launcher reuses an existing session with that label, including when it has other tabs. If several sessions have the same label, choose a unique group label before launching. Cleanup closes only your workers and leaves other conversations' tabs open.
+
+`--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. `--new-session` opens the worker in a new Rex session named after it; add its helpers there with `--with WORKER`. `--new-session LABEL` opens each worker in its own tab of one session named LABEL, created by the first. `--new-session` and `--with` also work from outside Rex. The placement options are mutually exclusive. Close any of them with `cleanup --name`; a tab closes with its last pane, and so does a `--new-session` session, even when its worker had already ended.
 
 ## Watch
 
@@ -78,5 +80,5 @@ Save what must outlive the panes, then run `rex-agents cleanup` before your fina
 
 - A worker's Reason `ask_user`, or a Claude worker's AskUserQuestion, is refused by a hook that tells it to message you. A subagent's `ask_user` is refused too, and the subagent returns the question to its worker. Codex `request_user_input` has no hook; only the task's rules stop it.
 - A worker blocked on a permission prompt pops up a Reason notification to the human. The prompt still waits in its pane.
-- `No Rex pane known for this conversation`: pass `--session` and `--block` as top-level options, before the subcommand: `rex-agents --session "$REX_SESSION" --block "$REX_BLOCK" launch …`. After `launch` they are rejected as unrecognized arguments.
+- `No Rex pane known for this conversation`: use `--group NAME`, `--new-session`, or `--with WORKER` for placement from outside Rex. For placement relative to your own pane, pass `--session` and `--block` as top-level options, before the subcommand: `rex-agents --session "$REX_SESSION" --block "$REX_BLOCK" launch …`. After `launch` they are rejected as unrecognized arguments.
 - `Owned workers cannot launch nested workers`: you are a worker. Message your driver instead.

@@ -4,7 +4,7 @@ Rex agents launches native interactive Claude Code and Codex workers into a Rex 
 
 ## What it does, and what it leaves to Reason
 
-- `rex-agents launch` opens a worker in an unfocused pane in the driver's workers session, with optional model and effort.
+- `rex-agents launch` opens a worker in an unfocused pane, with a chosen model and optional effort. Placement can use the driver's pane, a separate tab or session, another owned worker, or a named group.
 - `rex-agents cleanup` closes the calling driver's workers, and the workers session once it is empty.
 - A hook sends a driver-owned Claude worker's AskUserQuestion or Reason `ask_user` to its driver instead of the human. It pops up a Reason notification when a worker blocks on a permission prompt (Claude and Codex).
 
@@ -31,11 +31,15 @@ rex-agents launch --name reviewer --cwd /Users/juan/Code/rex-agents \
 
 `--tab` opens the worker alone in a new, unfocused tab of the driver's session, labeled with its name. `--with WORKER` opens it in the driver's own worker WORKER's tab. When that tab holds only the driver's workers, as a `--tab` tab does, every pane in it, WORKER included, shares the tab as an equal grid with no more rows than columns: 2 sit side by side, 4 sit 2x2, 5 sit 2+1+2, 9 sit 3x3. Otherwise the worker opens beside WORKER in the same balanced columns as beside the driver. Rex closes a tab with its last pane.
 
-`--new-session` opens the worker in a new Rex session labeled with its name, and Rex attaches no client to it. Use it for long work that gathers helpers: `--with WORKER` opens each helper as a pane in that session. Rex keeps a session after its last pane closes, so a worker that ended on its own leaves its session empty. Launching that name with `--new-session` again moves back into it. `--new-session LABEL` labels the session LABEL instead, so workers launched with the same LABEL each get a tab in one session; the window still carries the worker's name. The three options are exclusive.
+`--new-session` opens the worker in a new Rex session labeled with its name, and Rex attaches no client to it. Use it for long work that gathers helpers: `--with WORKER` opens each helper as a pane in that session. Rex keeps a session after its last pane closes, so a worker that ended on its own leaves its session empty. Launching that name with `--new-session` again moves back into it. `--new-session LABEL` labels the session LABEL instead, so workers launched with the same LABEL each get a tab in one session; the window still carries the worker's name. `--new-session` and `--with` also work when the driver runs outside Rex. Placement options are mutually exclusive.
+
+`--group NAME` creates or joins a Rex session named NAME. The first worker from a native conversation opens a tab named after that worker. Later group launches from that conversation join any surviving owned pane in that tab. Another conversation using the same group opens its own tab in the session. Groups require a native conversation identity. An existing session with that label is reused, including when it has other tabs. If several sessions have that label, launch refuses until a unique label is chosen. Group names follow the worker-name rules. The launcher accepts labels such as `codex`, `research`, and `reviews` with identical behavior. The skill tells a Codex driver to use `--group codex` by default unless the user requests another placement. The label comes from those caller instructions.
+
+Grouped panes run left to right in launch order. Each row has the same height, and each pane takes an equal share of its row. Up to three workers share one row. Four form a 2×2 grid, five form rows of 3+2, and six form 3+3. Seven, eight, and nine form 3+2+2, 3+3+2, and 3+3+3. A surviving worker can anchor later launches after the first exits. Group launches, cleanup, and a running worker wait reflow the remaining panes. A direct close in Rex without a running wait leaves its native layout until the next group operation.
 
 The result returns the session ID, pane IDs, the pane label, and `registration: pending`. The worker is ready when it messages you. A new Codex installation may first show its hook trust dialog.
 
-Workers open in the driver's tab, in balanced columns of up to three on its right, and the driver keeps its full height. One column takes the right third. Two or more columns share the right half, all the same width. Each new worker goes to the shortest column, leftmost on a tie, and rows in a column stay equal. When every column holds three, the next worker opens a new column, and the last column's lowest worker moves above it: 3 workers sit in one column, 4 sit 2+2, 6 sit 3+3, and 7 sit 3+2+2. A worker that has focus is never moved. Placement reads the live layout. When a worker closes, Rex gives its space to a neighbor and nothing rebalances, so sizes can end up uneven. When the last worker closes, the driver regains the full width. Workers in other tabs or sessions, such as a workers session from an earlier version, do not affect placement. Pane labels (`rex-agents:<owner>:<name>`) remain the authoritative record. Human launches follow the same rule. Launches never take focus. Workers share the driver's session, so the skill tells them to leave its name alone, and the `SessionStart` hook tells them again, since Rex's own hook asks every agent to name the session. `cleanup` kills a session only if it emptied it.
+With no placement option, workers open in the driver's tab, in balanced columns of up to three on its right, and the driver keeps its full height. One column takes the right third. Two or more columns share the right half, all the same width. Each new worker goes to the shortest column, leftmost on a tie, and rows in a column stay equal. When every column holds three, the next worker opens a new column, and the last column's lowest worker moves above it: 3 workers sit in one column, 4 sit 2+2, 6 sit 3+3, and 7 sit 3+2+2. A worker that has focus is never moved. Placement reads the live layout. When a worker closes, Rex gives its space to a neighbor and nothing rebalances, so sizes can end up uneven. When the last worker closes, the driver regains the full width. Workers in other tabs or sessions, such as a workers session from an earlier version, do not affect placement. Pane labels (`rex-agents:<owner>:<name>`) remain the authoritative record. Human launches follow the same rule. Launches never take focus. Workers share the driver's session, so the skill tells them to leave its name alone, and the `SessionStart` hook tells them again, since Rex's own hook asks every agent to name the session. `cleanup` kills a session only if it emptied it.
 
 ## Worker protocol
 
@@ -75,7 +79,7 @@ Cleanup closes every pane labeled with the driver's owner, including unfinished 
 
 To stop one worker and keep the rest, run `rex-agents cleanup --name NAME`. It applies the same ownership rule to that one name. A name the driver does not own, or one already closed, comes back under `gone`.
 
-Cleanup kills each session it emptied, so a `--new-session` session goes with its last pane. `cleanup --name NAME` on a worker that already ended also kills the empty session labeled NAME. A shared `--new-session LABEL` session goes when cleanup closes its last live worker, but if its last worker ended on its own it stays, empty, until the next launch with that LABEL moves back in.
+Cleanup kills each session it emptied, so a `--new-session` session goes with its last pane. `cleanup --name NAME` on a worker that already ended also kills the empty session labeled NAME. A shared `--group NAME` session stays open while any other conversation has a pane in it. Cleanup closes only the caller's labeled panes. A shared `--new-session LABEL` session goes when cleanup closes its last live worker, but if its last worker ended on its own it stays, empty, until the next launch with that LABEL moves back in.
 
 No Stop or SessionEnd hook runs cleanup. A driver crash leaves panes for manual closing. Claude `/clear` changes the driver's identity, so close older workers by hand.
 
@@ -83,7 +87,7 @@ No Stop or SessionEnd hook runs cleanup. A driver crash leaves panes for manual 
 
 The pane label is the only worker record: `rex-agents:<owner>:<name>`. The owner is the first 16 hex characters of `sha256("kind:native_id")` for an agent driver, or `-` for a human. The native ID comes from `CODEX_THREAD_ID` or `CLAUDE_CODE_SESSION_ID`. Rex keeps labels through title changes, and a pane closes when its process exits. So the label tells launch which names are taken and whether the driver is itself a worker. It tells cleanup which panes it may close.
 
-Claude shells carry `REX_SESSION` and `REX_BLOCK`. Codex tool shells do not, even with `--no-daemon`. The `SessionStart` hook records each conversation's pane in `~/.cache/rex-agents/sessions/<owner>.json`, and launch and cleanup fall back to it. If the hook has not run (for example, Codex hooks are not trusted), pass the pane explicitly:
+Claude shells carry `REX_SESSION` and `REX_BLOCK`. Codex tool shells do not, even with `--no-daemon`. The `SessionStart` hook records each conversation's pane in `~/.cache/rex-agents/sessions/<owner>.json`, and launch and cleanup fall back to it. A driver outside Rex can launch with `--group NAME`, `--new-session`, or `--with WORKER`. Placement relative to the driver requires a pane. If the hook has not run (for example, Codex hooks are not trusted), pass the pane explicitly:
 
 ```sh
 rex-agents --session SESSION_ID --block BLOCK_ID launch \
@@ -104,7 +108,7 @@ Install adds CLI and skill symlinks into this checkout and its own hook entries.
 
 ## Troubleshooting
 
-**`No Rex pane known for this conversation`:** the shell has no Rex context and no locator exists. Trust Codex hooks and resume the conversation, or pass `--session` and `--block`.
+**`No Rex pane known for this conversation`:** the shell has no Rex context and no locator exists. Use `--group NAME`, `--new-session`, or `--with WORKER` to launch from outside Rex. For placement relative to the driver, trust Codex hooks and resume the conversation, or pass `--session` and `--block`.
 
 **`Owned workers cannot launch nested workers`:** the driver pane is itself an owned worker. Launch from a human-started conversation.
 

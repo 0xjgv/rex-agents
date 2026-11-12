@@ -345,3 +345,9 @@ Live run from a Claude driver pane on `CLAUDE_CONFIG_DIR=~/.claude-work` in bypa
 - `cleanup --name` closed the worker and its session.
 
 Fixture-only: the refusal for a `gpt-*` model and for a malformed mode. Not verified: modes other than `bypassPermissions`. The suite has 76 tests.
+
+## Grouped placement (2026-11-12)
+
+Using two detached conversation identities and an arbitrary group name on the local Rex server, the live check measured every worker's rectangle after each launch from one through nine. Every rectangle matched its expected position, equal row height and share of the row width within 0.001 of the window dimensions. Removing the fourth and sixth workers from the nine-worker tab produced 3+3+2 and 3+2+2 with surviving workers in launch order. The second owner had a separate tab and its worker survived cleanup of the first owner.
+
+The layout check used stand-in processes. A separate three-worker run used real Haiku workers in the `codex` group. All three replied via Reason and their panes occupied equal thirds of one tab.
