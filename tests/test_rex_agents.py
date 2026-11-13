@@ -266,6 +266,19 @@ class LaunchTests(Base):
             self.launch("w2", model="gpt-6.1-sol", permission_mode="bypassPermissions")
         self.assertEqual(len(self.app.splits()), 1)
 
+    def test_disallowed_tools_reach_claude_only(self):
+        self.agent()
+        self.launch("w1", effort="low", permission_mode="auto", task="t", disallowed_tools=["Artifact", "Workflow"])
+        self.assertEqual(self.argv(self.app.splits()[0]),
+                         ["/bin/agent", "--name", "w1", "--settings", '{"crossSessionInbound":"accept"}', "--model",
+                          "claude-opus-5-5", "--effort", "low", "--permission-mode", "auto",
+                          "--disallowedTools", "Artifact", "Workflow", "--", "t"])
+        self.launch("w2")
+        self.assertNotIn("--disallowedTools", self.argv(self.app.splits()[1]))
+        with self.assertRaises(Error):
+            self.launch("w3", model="gpt-6.1-sol", disallowed_tools=["Artifact"])
+        self.assertEqual(len(self.app.splits()), 2)
+
     def test_env_prefixes_claude_argv(self):
         self.agent()
         base = ["/bin/agent", "--name", "w", "--settings", '{"crossSessionInbound":"accept"}', "--model",
@@ -385,7 +398,8 @@ class LaunchTests(Base):
         self.agent()
         for kw in ({"name": "bad name"}, {"name": "x" * 65}, {"name": "w", "model": "a b"},
                    {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"},
-                   {"name": "w", "permission_mode": "a b"},
+                   {"name": "w", "permission_mode": "a b"}, {"name": "w", "disallowed_tools": ["A", "--model"]},
+                   {"name": "w", "disallowed_tools": [""]},
                    {"name": "w", "env": ["A"]}, {"name": "w", "env": ["=1"]}, {"name": "w", "env": ["1A=1"]},
                    {"name": "w", "env": ["A-B=1"]}, {"name": "w", "env": ["A=1\n"]}, {"name": "w", "env": ["A=\0"]},
                    {"name": "w", "model": "gpt-6.1-sol", "env": ["A=x\ny"]}):

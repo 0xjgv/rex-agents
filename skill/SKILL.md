@@ -48,6 +48,8 @@ Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is pa
 
 A Claude worker starts in its settings' permission mode and may stop on a prompt only the human can answer. Pass `--permission-mode MODE`, such as `bypassPermissions`, only when the user or your instructions ask for it.
 
+`--disallowed-tools TOOL [TOOL ...]` removes built-in tools from a Claude worker. Their schemas leave every API request. Use it for workers that never need them, such as `Artifact` or `AskUserQuestion`.
+
 `--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included.
 
 `--tab` opens the worker alone in a new, unfocused tab of your session, named after it. `--with WORKER` opens the worker in your worker WORKER's tab; in a `--tab` tab, every pane shares the tab as an equal grid. `--new-session` opens the worker in a new Rex session named after it; add its helpers there with `--with WORKER`. `--new-session LABEL` opens each worker in its own tab of one session named LABEL, created by the first. Close any of them with `cleanup --name`; a tab closes with its last pane, and so does a `--new-session` session, even when its worker had already ended.
