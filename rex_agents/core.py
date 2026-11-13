@@ -350,7 +350,7 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None, permission_mode=None):
+               env=None, permission_mode=None, disallowed_tools=None):
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         # Bare --new-session names the session after the worker; a label lets several workers share one.
@@ -369,6 +369,11 @@ class Integration:
             raise Error(f"Unknown model family {model}: expected claude-* or gpt-*")
         if permission_mode is not None and kind != "claude":
             raise Error("--permission-mode applies to Claude workers only")
+        if disallowed_tools is not None and kind != "claude":
+            raise Error("--disallowed-tools applies to Claude workers only")
+        # The flag is variadic: a name starting with "-" would end the list and read as a flag.
+        if disallowed_tools is not None and not all(t and not t.startswith("-") for t in disallowed_tools):
+            raise Error("Invalid tool: expected names that do not start with -")
         # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
         config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
         if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
@@ -394,6 +399,9 @@ class Integration:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
         if permission_mode is not None:
             argv += ["--permission-mode", permission_mode]
+        if disallowed_tools is not None:
+            # Variadic, so it goes last: the next flag, or the "--" before the task, ends its list.
+            argv += ["--disallowedTools", *disallowed_tools]
         if kind == "codex":
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:
