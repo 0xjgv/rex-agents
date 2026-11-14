@@ -23,18 +23,20 @@ Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex
 | astra | `gpt-6-astra` | Codex |
 | luna | `gpt-6-luna` | Codex |
 
-The model picks the harness: `claude-*` runs Claude Code, `gpt-*` runs Codex. Use any model, harness, or effort the user names. Fill what they leave open from the one role below that fits the task: take the first model in its preference order that fits the user's instructions, and the role's effort. For `advise`, use the harness other than yours unless the user says otherwise. These are defaults, not measured rankings.
+Claude models run in Claude Code and GPT models run in Codex. Honor any model, harness, effort, worker count, or cross-harness comparison the user requests. For choices the user leaves open, start with the role defaults below. You may change the model, harness, effort, or worker count to fit the task. When you change a default, give the user a one-sentence reason with your picks.
 
-| Role | Fits | Model preference | Effort |
+A plus marks a default pair. An arrow lists preferences for a single worker. For `advise`, prefer the harness other than yours.
+
+| Role | Assignment | Workers | Effort |
 |---|---|---|---|
-| `implement` | Writing or changing code, including fixing a bug whose cause is unknown | sol → opus | `medium` |
+| `implement` | Split independent changes by file ownership and implement in parallel. For shared code, Sol implements and Opus reviews the resulting diff at `high` effort. | sol + opus | `medium` for implementation |
 | `validate` | Checking finished work for correctness: review, tests, verification | opus → astra | `high` |
-| `plan` | Designing the approach: structure outlines and implementation plans | opus → sol | `xhigh` |
+| `plan` | Give both the same brief in parallel. Each drafts a plan independently, then the driver compares them and recommends an approach. | opus + astra | `xhigh` |
 | `advise` | Decisions, trade-offs, and second opinions | astra → fable | `high` |
-| `research` | Reading code or docs to answer questions with evidence, without changing anything | terra → sonnet | `high` |
+| `research` | Give both the same read-only question in parallel. Each returns independent evidence, then the driver reconciles their findings. | terra + sonnet | `high` |
 | `commit` | Commits, PR text, and other small mechanical tasks | terra → sonnet | `medium` |
 
-Map the short name through the model table, launch with that model and effort, and tell the user the role and pick, such as "plan → opus, xhigh". Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Every worker gets a pane, even on your own harness; do not substitute a native subagent or another model.
+Map each short name through the model table and tell the user your picks and efforts, such as "Terra alone at high effort because this question can be settled by tracing one code path." Always pass `--effort`: `low`, `medium`, `high`, `xhigh`, or `max`; Codex also takes `ultra`. Launch each selected model in its own Rex pane, including workers on your own harness.
 
 ## Launch
 
@@ -65,12 +67,15 @@ A worker that exits sends no message. For a worker you keep across turns, run `r
 Every task states:
 
 1. Your Reason address. In Claude, take the `is_me` row of `~/.reason/bin/reason-network who --json`; `reason-network` is often not on PATH. In Codex, use MCP `list_team`; the CLI fails in the Codex sandbox.
-2. The goal, files, constraints, and the shape of the answer you want.
+2. The absolute repository and working-directory paths, bounded goal, owned files, and an instruction not to revert other agents' edits. Include exact user constraints and settled decisions, required tools, expected outcome, required checks, and the evidence or unverified gaps to return.
 3. The rules: reply with MCP `send_message` to that address; send questions there, never to AskUserQuestion, `request_user_input`, or Reason `ask_user`; launch no workers, leave the Rex session's name alone, and message no one else; say `DONE` when finished, with each command you ran and its exit code or output.
+4. Relevant applicable skill names and absolute `SKILL.md` paths, with instructions to read them before acting. Include this handoff for native subagents too, especially fresh agents without inherited context; preserve any leaf worker's no-delegation constraint. Do not copy the whole skill library.
+
+Resolve paths on the recipient's machine. A local absolute path does not establish that a remote worker can read it. If a needed skill is inaccessible, pass its essential instructions and identify the gap; stop dependent work when missing instructions or permissions prevent safe execution within scope. Loading a skill grants neither tools nor authority beyond the task. A native subagent returns results and questions to its worker, which relays them to the driver.
 
 Then work in rounds. Reply to the worker's `from` with `reply_to`: share drafts, ask for critique, push back. Attach drafts and long results with `send_message` `files` (up to 10 text files, 256 KB each, from the working folder or repository). Workers advise; you decide. Ask your human before answering a question meant for them. A delivery result never means the work finished; wait for `DONE`. While you wait, end your turn: a worker's message wakes you, so build no watcher for results. Never poll or read another conversation's inbox.
 
-For a team, launch one worker per role, each with its own name and task, and keep each thread on that worker's `from` address. Each worker owns its task and may split it among its own native subagents; their questions reach you through the worker.
+Give each worker its own name and task, and keep each thread on that worker's `from` address. Each worker owns its task and may split it among its own native subagents; their questions reach you through the worker.
 
 ## Close
 
