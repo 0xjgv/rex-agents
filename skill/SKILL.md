@@ -50,6 +50,8 @@ Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is pa
 
 A Claude worker starts in its settings' permission mode and may stop on a prompt only the human can answer. Pass `--permission-mode MODE`, such as `bypassPermissions`, only when the user or your instructions ask for it.
 
+`--disallowed-tools TOOL [TOOL ...]` removes built-in tools from a Claude worker. Their schemas leave every API request. Use it for workers that never need them, such as `Artifact` or `AskUserQuestion`.
+
 `--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included. If a detached shell cannot find `rex` on PATH, set `REX_AGENTS_REX` to the absolute path of the installed Rex CLI for the launch and subsequent `rex-agents` commands, such as `REX_AGENTS_REX="/absolute/path/to/rex" rex-agents launch …`.
 
 When driving from Codex, add `--group codex` unless the user requests another placement. The group label is supplied by the caller. Use `--group NAME` with any valid name to create or join that named Rex session. Your conversation gets one tab, named after its first worker, and subsequent workers join surviving panes in that tab. Another conversation gets its own tab in the same session. Workers fill equal-height rows in launch order, with equal widths within each row. Four workers form a 2×2 grid, five form rows of 3+2, and seven form 3+2+2. Groups require your native conversation identity and work from outside Rex. The launcher reuses an existing session with that label, including when it has other tabs. If several sessions have the same label, choose a unique group label before launching. Cleanup closes only your workers and leaves other conversations' tabs open.
