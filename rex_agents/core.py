@@ -39,6 +39,7 @@ OWNER = ("You own your task. Use native subagents freely, and tell each one to p
 # A subagent cannot receive a Reason reply, so its question goes back to the worker that launched it.
 RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks to the human. Do not ask the user. "
           "End your turn and put the question in your final reply; the agent that launched you will get it answered.")
+RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
 # What `resume` needs to reopen a worker's own conversation with the flags it launched with.
 RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools",
             "group")
@@ -244,7 +245,7 @@ class Integration:
                     # Codex has no flag to pin a conversation ID, and Claude's /clear starts a new one; the record
                     # learns each here. The hook stays quiet: a failed write leaves resume without an ID.
                     with contextlib.suppress(Error, OSError):
-                        record = self.record(*worker)
+                        record = Path(os.environ[RECORD]) if RECORD in os.environ else self.record(*worker)
                         if (data := read(record)) and kind.startswith(str(data.get("kind"))):
                             atomic(record, dict(data, id=native_id))
                     context = KEEP_NAME if worker[0] == HUMAN else f"{KEEP_NAME}\n\n{OWNER}"
@@ -507,8 +508,8 @@ class Integration:
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:
                 argv += ["-c", f"shell_environment_policy.set.{key}=" + json.dumps(value, ensure_ascii=False)]
-        if env:
-            argv = ["/usr/bin/env", *("".join(e) for e in env), *argv]
+        # The pane's environment may put the state directory elsewhere, so the hook gets the record's path.
+        argv = ["/usr/bin/env", f"{RECORD}={self.record(me, name)}", *("".join(e) for e in env), *argv]
         # `codex resume` takes the conversation ID, then the task, as positionals.
         tail = [resume] if kind == "codex" and resume else []
         if task is not None:
