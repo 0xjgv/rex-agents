@@ -345,3 +345,13 @@ Live run from a Claude driver pane on `CLAUDE_CONFIG_DIR=~/.claude-work` in bypa
 - `cleanup --name` closed the worker and its session.
 
 Fixture-only: the refusal for a `gpt-*` model and for a malformed mode. Not verified: modes other than `bypassPermissions`. The suite has 76 tests.
+
+## Worker resume (2026-11-16)
+
+Claude Code `2.1.325`. Run from a plain shell pane in a scratch Rex session, with `CLAUDE_CODE_SESSION_ID=ra-probe-driver` as a stand-in driver identity, since an owned worker cannot launch workers.
+
+- `launch --name ra-resume-probe --tab --cwd /tmp --model claude-haiku-5-5 --task 'Remember the word PELICAN, reply OK'` wrote the record with `id` `9a60432c-…`; the worker's footer showed `9a60432` and it answered `OK`.
+- `cleanup --name ra-resume-probe` closed it. `resume --name ra-resume-probe --task 'What word did I ask you to remember?'` opened a new tab whose screen held the first exchange and then `⏺ PELICAN`.
+- One transcript existed afterwards, `~/.claude/projects/-private-tmp/9a60432c-….jsonl`, not two.
+
+Evidence: `.verification/resume-2026-11-16/`. Fixture-only: the Codex path (`SessionStart` storing the ID, `codex resume --no-daemon … -- ID TASK`), the refusal while a pane exists, and a missing record. The suite has 83 tests.

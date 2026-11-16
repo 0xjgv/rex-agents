@@ -25,6 +25,8 @@ Each worker pane carries the label `rex-agents:<owner>:<name>`, the only worker 
 
 A worker that exits sends no message. `rex-agents status` lists the driver's live workers. `rex-agents wait --name NAME` blocks until that worker's pane ends and prints how; a driver runs it as a background command, so the exit wakes it.
 
+`rex-agents resume --name NAME [--task TEXT | --task-file PATH]` reopens an ended worker on its own conversation, with full context, in the same placement and with the same flags. Launch pins a Claude worker's conversation with `--session-id`; a Codex worker's ID comes from its SessionStart hook. Each launch writes `${XDG_STATE_HOME:-~/.local/state}/rex-agents/workers/<owner>/<name>.json`, which outlives the pane and `cleanup`; relaunching the name starts a new conversation and overwrites it. Resume refuses while the worker has a pane. Background processes, such as the driver's `wait`, do not come back: re-arm them.
+
 When a driver-owned Claude worker opens AskUserQuestion, a hook refuses it and tells the worker to ask its driver the way its task says. When a worker blocks on a permission prompt, the hook pops up a Reason notification to the human.
 
 After hook definitions change, rerun `rex-agents install` and re-trust Codex hooks through `/hooks`. See [VERIFICATION.md](VERIFICATION.md) for measured results and limits.
