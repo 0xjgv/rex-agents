@@ -229,7 +229,10 @@ class Base(unittest.TestCase):
         return request["layout"]["block"]
 
     def argv(self, request):
-        return self.block(request)["options"]["command"]
+        """The worker's argv without the record path that every launch passes its hook."""
+        env, record, *argv = self.block(request)["options"]["command"]
+        self.assertEqual((env, record.partition("=")[0]), ("/usr/bin/env", core.RECORD))
+        return [env, *argv] if "=" in argv[0] else argv
 
     def placed(self):
         request = self.app.splits()[-1]
@@ -679,7 +682,7 @@ class LaunchTests(Base):
                 request = self.app.requests[-1]
                 layout = request["initial_windows"][0]["layout"] if method == "session.create" else request["layout"]
                 self.assertEqual(self.app.calls[-1], ("api", "call", method, "-"))
-                self.assertEqual(layout["block"]["options"]["command"], argv)
+                self.assertEqual(self.argv(dict(layout=layout)), argv)
 
     def test_relaunch_moves_back_into_the_session_its_worker_left_empty(self):
         self.agent()
@@ -951,11 +954,18 @@ class ResumeTests(Base):
         self.app.hook("codex", "SessionStart", {"session_id": "cx-1"})
         self.app.block = driver
         self.assertEqual(self.record("w1")["id"], "cx-1")
+        # The pane's environment may move the state directory; the record path the launch passed still wins.
+        os.environ[core.RECORD] = str(self.app.record(ME, "w1"))
+        self.app.block, self.app.state, state = block, self.tmp/"elsewhere", self.app.state
+        self.app.hook("codex", "SessionStart", {"session_id": "cx-2"})
+        self.app.block, self.app.state = driver, state
+        del os.environ[core.RECORD]
+        self.assertEqual(self.record("w1")["id"], "cx-2")
         self.app.drop(block)
         self.app.resume("w1", task="go on")
         argv = self.argv(self.app.splits()[-1])
         self.assertEqual(argv[:3], ["/bin/agent", "resume", "--no-daemon"])
-        self.assertEqual(argv[-3:], ["--", "cx-1", "go on"])
+        self.assertEqual(argv[-3:], ["--", "cx-2", "go on"])
 
     def test_claude_record_follows_a_cleared_conversation(self):
         self.agent()
