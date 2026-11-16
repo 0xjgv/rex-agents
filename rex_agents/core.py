@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "bin/rex-agents"
@@ -37,6 +39,9 @@ OWNER = ("You own your task. Use native subagents freely, and tell each one to p
 # A subagent cannot receive a Reason reply, so its question goes back to the worker that launched it.
 RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks to the human. Do not ask the user. "
           "End your turn and put the question in your final reply; the agent that launched you will get it answered.")
+RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
+# What `resume` needs to reopen a worker's own conversation with the flags it launched with.
+RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -188,6 +193,8 @@ class Integration:
         self.cache = Path(cache or os.environ.get("XDG_CACHE_HOME", str(Path.home()/".cache")))
         if cache is None:
             self.cache /= "rex-agents"
+        # Worker records outlive their panes and the cache, so `resume` can reopen a conversation.
+        self.state = Path(os.environ.get("XDG_STATE_HOME", str(Path.home()/".local/state")))/"rex-agents"/"workers"
         self.server = server or os.environ.get("REX_SERVER")
         self.session = session or os.environ.get("REX_SESSION")
         self.block = block or os.environ.get("REX_BLOCK")
@@ -212,6 +219,9 @@ class Integration:
     def locator(self, identity):
         return self.cache/"sessions"/f"{owner(identity)}.json"
 
+    def record(self, me, name):
+        return self.state/me/f"{name}.json"
+
     def hook(self, kind, event, payload):
         native_id = payload.get("session_id") or payload.get("conversation_id") or payload.get("sessionId")
         if not isinstance(native_id, str) or not native_id:
@@ -230,6 +240,12 @@ class Integration:
             atomic(self.locator((kind, native_id)), location)
             with contextlib.suppress(Error, LookupError, TypeError):
                 if worker := self.worker():
+                    # Codex has no flag to pin a conversation ID, and Claude's /clear starts a new one; the record
+                    # learns each here. The hook stays quiet: a failed write leaves resume without an ID.
+                    with contextlib.suppress(Error, OSError):
+                        record = Path(os.environ[RECORD]) if RECORD in os.environ else self.record(*worker)
+                        if (data := read(record)) and kind.startswith(str(data.get("kind"))):
+                            atomic(record, dict(data, id=native_id))
                     context = KEEP_NAME if worker[0] == HUMAN else f"{KEEP_NAME}\n\n{OWNER}"
                     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
             return
@@ -350,7 +366,9 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None, permission_mode=None, disallowed_tools=None):
+               env=None, permission_mode=None, disallowed_tools=None, resume=None):
+        """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
+        given = locals()
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         # Bare --new-session names the session after the worker; a label lets several workers share one.
@@ -387,7 +405,12 @@ class Integration:
         me = owner(identity)
         self.where(identity)
         own = self.own(identity)
-        argv = [executable, "--name", name] if kind == "claude" else [executable, "--no-daemon"]
+        # Claude takes a conversation ID up front; Codex reports its own to the SessionStart hook.
+        native_id = resume or (str(uuid.uuid4()) if kind == "claude" else None)
+        if kind == "claude":
+            argv = [executable, "--name", name, "--resume" if resume else "--session-id", native_id]
+        else:
+            argv = [executable, *(["resume"] if resume else []), "--no-daemon"]
         if kind == "codex":
             # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
             argv += ["-c", "projects={" + json.dumps(str(directory), ensure_ascii=False) + '={trust_level="trusted"}}']
@@ -406,10 +429,14 @@ class Integration:
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:
                 argv += ["-c", f"shell_environment_policy.set.{key}=" + json.dumps(value, ensure_ascii=False)]
-        if env:
-            argv = ["/usr/bin/env", *("".join(e) for e in env), *argv]
+        # The pane's environment may put the state directory elsewhere, so the hook gets the record's path.
+        argv = ["/usr/bin/env", f"{RECORD}={self.record(me, name)}", *("".join(e) for e in env), *argv]
+        # `codex resume` takes the conversation ID, then the task, as positionals.
+        tail = [resume] if kind == "codex" and resume else []
         if task is not None:
-            argv += ["--", task]
+            tail.append(task)
+        if tail:
+            argv += ["--", *tail]
         label = f"{PREFIX}{me}:{name}"
         with self.lock():
             blocks = self.panes()
@@ -428,6 +455,12 @@ class Integration:
                     raise Error(f"No worker {beside} of yours to open beside")
             if kind == "claude":
                 trust_claude(directory, config)
+            if not resume:
+                # Written before the pane opens, so a Codex worker's SessionStart hook finds it. Relaunching overwrites it.
+                flags = {k: given[k] for k in RECORDED}
+                atomic(self.record(me, name), dict(
+                    flags, kind=kind, id=native_id, cwd=str(directory), env=["".join(e) for e in env],
+                    launched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
             mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
                     and b["block_id"] != anchor["block_id"]
                     and b["session"] == anchor["session"] and b.get("window_id") == anchor.get("window_id")]
@@ -477,6 +510,23 @@ class Integration:
                 except Error as exc:
                     raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
             return dict(result, session_id=session, name=name, label=label, registration="pending")
+
+    def resume(self, name, task=None):
+        """Reopen an ended worker's own conversation, in the same place and with the same flags."""
+        if not re.fullmatch(NAME, name):
+            raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
+        me = owner(native_identity())
+        data = read(path := self.record(me, name))
+        if not data:
+            names = sorted(p.stem for p in (self.state/me).glob("*.json"))
+            raise Error(f"No record for worker {name} at {path}; yours: {', '.join(names) or 'none'}")
+        if not data.get("id"):
+            raise Error(f"Worker {name}'s record at {path} has no conversation ID yet; its SessionStart hook sets it")
+        flags = {k: data.get(k) for k in RECORDED}
+        # A --with anchor that has ended falls back to the default placement.
+        if flags["beside"] and not any(w["name"] == flags["beside"] for w in self.status()["workers"]):
+            flags["beside"] = None
+        return self.launch(name, task=task, resume=data["id"], **flags)
 
     def status(self):
         """The caller's live workers, oldest first. A worker with no row has no pane: it ended or was closed."""

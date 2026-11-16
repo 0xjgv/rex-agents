@@ -8,12 +8,14 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import uuid
 from unittest import mock
 
 from rex_agents import cli, core, install
 from rex_agents.core import CLI, CommandError, Error, Integration, owner
 
 DRIVER = ("claude-code", "drv")
+SID = "6f1c2c47-3b8e-4d2a-9a51-0d6b5e1f7a20"  # the conversation ID a Claude launch pins
 ME = owner(DRIVER)
 
 
@@ -207,6 +209,9 @@ class Base(unittest.TestCase):
         which = mock.patch.object(core.shutil, "which", return_value="/bin/agent")
         which.start()
         self.addCleanup(which.stop)
+        self.pin = mock.patch.object(core.uuid, "uuid4", return_value=uuid.UUID(SID))
+        self.pin.start()
+        self.addCleanup(mock.patch.stopall)
         self.cwd = self.tmp/"work"
         self.cwd.mkdir()
         self.app = Fake(self.tmp/"cache", server="unix:s", session="session:a")
@@ -224,7 +229,10 @@ class Base(unittest.TestCase):
         return request["layout"]["block"]
 
     def argv(self, request):
-        return self.block(request)["options"]["command"]
+        """The worker's argv without the record path that every launch passes its hook."""
+        env, record, *argv = self.block(request)["options"]["command"]
+        self.assertEqual((env, record.partition("=")[0]), ("/usr/bin/env", core.RECORD))
+        return [env, *argv] if "=" in argv[0] else argv
 
     def placed(self):
         request = self.app.splits()[-1]
@@ -239,7 +247,7 @@ class LaunchTests(Base):
         result = self.launch("w1", task=task, model="claude-opus-5-5", effort="xhigh")
         request = self.app.splits()[0]
         self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_split", "-"))
-        self.assertEqual(self.argv(request), ["/bin/agent", "--name", "w1", "--settings",
+        self.assertEqual(self.argv(request), ["/bin/agent", "--name", "w1", "--session-id", SID, "--settings",
                                               '{"crossSessionInbound":"accept"}', "--model", "claude-opus-5-5",
                                               "--effort", "xhigh", "--", task])
         self.assertEqual(self.block(request)["options"]["cwd"], str(self.cwd.resolve()))
@@ -270,7 +278,7 @@ class LaunchTests(Base):
         self.agent()
         self.launch("w1", effort="low", permission_mode="auto", task="t", disallowed_tools=["Artifact", "Workflow"])
         self.assertEqual(self.argv(self.app.splits()[0]),
-                         ["/bin/agent", "--name", "w1", "--settings", '{"crossSessionInbound":"accept"}', "--model",
+                         ["/bin/agent", "--name", "w1", "--session-id", SID, "--settings", '{"crossSessionInbound":"accept"}', "--model",
                           "claude-opus-5-5", "--effort", "low", "--permission-mode", "auto",
                           "--disallowedTools", "Artifact", "Workflow", "--", "t"])
         self.launch("w2")
@@ -281,7 +289,7 @@ class LaunchTests(Base):
 
     def test_env_prefixes_claude_argv(self):
         self.agent()
-        base = ["/bin/agent", "--name", "w", "--settings", '{"crossSessionInbound":"accept"}', "--model",
+        base = ["/bin/agent", "--name", "w", "--session-id", SID, "--settings", '{"crossSessionInbound":"accept"}', "--model",
                 "claude-opus-5-5"]
         for i, (env, prefix) in enumerate(((None, []), ([], []), (["A=1"], ["/usr/bin/env", "A=1"]),
                                            (["LEDGER_DIR=/a b/c", "LEDGER_AS=x=y"],
@@ -342,7 +350,7 @@ class LaunchTests(Base):
             self.launch("w1")
         cwd = self.block(self.app.splits()[0])["options"]["cwd"]
         self.assertEqual(json.loads(path.read_text()), {"projects": {cwd: {"hasTrustDialogAccepted": True}}})
-        source, target = replace.call_args.args
+        source, target = replace.call_args_list[0].args
         self.assertEqual((Path(source).parent, target), (self.home, path))
         self.assertFalse(Path(source).exists())
 
@@ -365,7 +373,7 @@ class LaunchTests(Base):
         path.write_text(value)
         with mock.patch.object(core, "atomic") as write:
             self.launch("w1")
-        write.assert_not_called()
+        self.assertNotIn(path, [c.args[0] for c in write.call_args_list])
         self.assertEqual(path.read_text(), value)
 
     def test_claude_trust_refuses_invalid_config_without_launching(self):
@@ -674,7 +682,7 @@ class LaunchTests(Base):
                 request = self.app.requests[-1]
                 layout = request["initial_windows"][0]["layout"] if method == "session.create" else request["layout"]
                 self.assertEqual(self.app.calls[-1], ("api", "call", method, "-"))
-                self.assertEqual(layout["block"]["options"]["command"], argv)
+                self.assertEqual(self.argv(dict(layout=layout)), argv)
 
     def test_relaunch_moves_back_into_the_session_its_worker_left_empty(self):
         self.agent()
@@ -894,6 +902,97 @@ class StatusTests(Base):
             cli.main(["wait"])
 
 
+class ResumeTests(Base):
+    def record(self, name):
+        return core.read(self.app.record(ME, name))
+
+    def test_launch_pins_a_new_conversation_and_records_it(self):
+        self.agent()
+        self.pin.stop()
+        self.launch("w1", effort="low")
+        record = self.record("w1")
+        self.assertEqual(uuid.UUID(record["id"]).version, 4)
+        self.assertEqual(self.argv(self.app.splits()[0])[1:5], ["--name", "w1", "--session-id", record["id"]])
+        self.assertEqual((record["kind"], record["cwd"], record["effort"]), ("claude", str(self.cwd.resolve()), "low"))
+        self.assertEqual(self.app.record(ME, "w1"), self.home/".local/state/rex-agents/workers"/ME/"w1.json")
+
+    def test_resume_reopens_the_conversation_with_its_launch_flags(self):
+        self.agent()
+        launched = self.launch("w1", tab=True, effort="high", permission_mode="auto", env=["A=1"],
+                               disallowed_tools=["Artifact"], task="first")
+        record = self.record("w1")
+        self.app.drop(launched["block_ids"][0])
+        self.app.resume("w1", task="again")
+        first, again = self.app.splits()
+        self.assertEqual(again["window_label"], "w1")
+        self.assertEqual(self.argv(again), [*self.argv(first)[:5], "--resume", SID, *self.argv(first)[7:-1], "again"])
+        self.assertEqual(self.record("w1"), record)
+
+    def test_resume_refuses_while_the_worker_has_a_pane(self):
+        self.agent()
+        self.launch("w1")
+        with self.assertRaisesRegex(Error, "already has a Rex pane"):
+            self.app.resume("w1")
+        self.assertEqual(len(self.app.splits()), 1)
+
+    def test_resume_without_a_record_names_the_path(self):
+        self.agent()
+        self.launch("w1")
+        with self.assertRaises(Error) as caught:
+            self.app.resume("w2")
+        self.assertIn(str(self.app.record(ME, "w2")), str(caught.exception))
+        self.assertIn("yours: w1", str(caught.exception))
+
+    def test_codex_record_takes_its_id_from_the_session_start_hook(self):
+        self.agent()
+        block = self.launch("w1", model="gpt-6.1-sol")["block_ids"][0]
+        self.app.drop(block)
+        with self.assertRaisesRegex(Error, "no conversation ID"):
+            self.app.resume("w1")
+        block = self.launch("w1", model="gpt-6.1-sol")["block_ids"][0]
+        self.app.block, driver = block, self.app.block
+        self.app.hook("codex", "SessionStart", {"session_id": "cx-1"})
+        self.app.block = driver
+        self.assertEqual(self.record("w1")["id"], "cx-1")
+        # The pane's environment may move the state directory; the record path the launch passed still wins.
+        os.environ[core.RECORD] = str(self.app.record(ME, "w1"))
+        self.app.block, self.app.state, state = block, self.tmp/"elsewhere", self.app.state
+        self.app.hook("codex", "SessionStart", {"session_id": "cx-2"})
+        self.app.block, self.app.state = driver, state
+        del os.environ[core.RECORD]
+        self.assertEqual(self.record("w1")["id"], "cx-2")
+        self.app.drop(block)
+        self.app.resume("w1", task="go on")
+        argv = self.argv(self.app.splits()[-1])
+        self.assertEqual(argv[:3], ["/bin/agent", "resume", "--no-daemon"])
+        self.assertEqual(argv[-3:], ["--", "cx-2", "go on"])
+
+    def test_claude_record_follows_a_cleared_conversation(self):
+        self.agent()
+        block = self.launch("w1")["block_ids"][0]
+        self.app.block, driver = block, self.app.block
+        self.app.hook("claude-code", "SessionStart", {"session_id": "after-clear"})
+        self.app.hook("codex", "SessionStart", {"session_id": "other-harness"})
+        self.app.block = driver
+        self.assertEqual(self.record("w1")["id"], "after-clear")
+
+    def test_resume_beside_an_ended_worker_opens_beside_the_driver(self):
+        self.agent()
+        lead = self.launch("lead", tab=True)["block_ids"][0]
+        helper = self.launch("helper", beside="lead")["block_ids"][0]
+        self.app.drop(lead)
+        self.app.drop(helper)
+        self.app.resume("helper")
+        self.assertEqual(self.app.splits()[-1]["anchor_id"], self.driver)
+
+    def test_cli_resume_takes_a_task(self):
+        self.agent()
+        self.app.drop(self.launch("w1")["block_ids"][0])
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"):
+            self.assertEqual(cli.main(["resume", "--name", "w1", "--task", "hi"]), 0)
+        self.assertEqual(self.argv(self.app.splits()[-1])[-2:], ["--", "hi"])
+
+
 class HookTests(Base):
     def setUp(self):
         super().setUp()
@@ -1088,12 +1187,14 @@ class InstallTests(Base):
     def test_uninstall_removes_only_ours(self):
         install.install(self.home)
         (self.home/".cache/rex-agents").mkdir(parents=True)
+        (self.home/".local/state/rex-agents/workers").mkdir(parents=True)
         install.install(self.home, remove=True)
         self.assertEqual({k: v for k, v in self.ours(self.claude).items() if v}, {})
         self.assertEqual(core.read(self.claude)["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "other")
         self.assertNotIn("hooks", core.read(self.codex))
         self.assertFalse((self.home/".local/bin/rex-agents").is_symlink())
         self.assertFalse((self.home/".cache/rex-agents").exists())
+        self.assertFalse((self.home/".local/state/rex-agents").exists())
         self.assertFalse(install.installed())
 
     def test_hook_inert_when_not_installed(self):
