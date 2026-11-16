@@ -8,6 +8,16 @@ from .core import Error, Integration, decode
 from .install import install, installed
 
 
+def tasks(command):
+    task = command.add_mutually_exclusive_group()
+    task.add_argument("--task", help="The worker's first prompt")
+    task.add_argument("--task-file")
+
+
+def task(args):
+    return Path(args.task_file).read_text() if args.task_file else args.task
+
+
 def parser():
     p = argparse.ArgumentParser(description="Launch interactive Claude Code and Codex workers into Rex panes, and close the ones you own.")
     for option in ("server", "session", "block"):
@@ -16,7 +26,7 @@ def parser():
     launch = commands.add_parser("launch")
     launch.add_argument("--name", required=True)
     launch.add_argument("--cwd", default=".", help="Worker directory; defaults to the current one")
-    launch.add_argument("--task-file")
+    tasks(launch)
     launch.add_argument("--model", required=True, help="claude-* runs Claude Code; gpt-* runs Codex")
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
     launch.add_argument("--permission-mode", metavar="MODE", help="Claude Code permission mode; omitted values inherit")
@@ -28,6 +38,9 @@ def parser():
     where.add_argument("--new-session", nargs="?", const=True, default=False, metavar="LABEL",
                        help="Open the worker in a tab of the Rex session LABEL, created if needed; LABEL defaults to the worker's name")
     where.add_argument("--with", dest="beside", metavar="WORKER", help="Open the worker beside your worker WORKER, in its tab")
+    resume = commands.add_parser("resume", help="Reopen an ended worker's own conversation, as launched")
+    resume.add_argument("--name", required=True)
+    tasks(resume)
     cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     cleanup.add_argument("--name", help="Close only this owned worker")
     commands.add_parser("status", help="List this driver's live workers")
@@ -47,11 +60,12 @@ def main(argv=None):
     try:
         result = None
         if args.command == "launch":
-            task = Path(args.task_file).read_text() if args.task_file else None
-            result = app.launch(args.name, args.cwd, args.model, task, effort=args.effort, tab=args.tab,
+            result = app.launch(args.name, args.cwd, args.model, task(args), effort=args.effort, tab=args.tab,
                                 beside=args.beside, new_session=args.new_session, env=args.env,
                                 permission_mode=args.permission_mode, disallowed_tools=args.disallowed_tools,
                                 group=args.group)
+        elif args.command == "resume":
+            result = app.resume(args.name, task(args))
         elif args.command == "cleanup":
             result = app.cleanup(name=args.name)
             print(json.dumps(result, indent=2))
