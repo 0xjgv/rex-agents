@@ -96,9 +96,11 @@ def install(home=None, remove=False):
         for path, target in links.items():
             if path.is_symlink() and path.resolve() == target.resolve():
                 path.unlink()
-        cache = Path(os.environ.get("XDG_CACHE_HOME", str(home/".cache")))/"rex-agents"
-        if cache.exists():
-            shutil.rmtree(cache)
+        # Worker records may hold --env values; they go with the cache.
+        for kind, default in (("CACHE", ".cache"), ("STATE", ".local/state")):
+            found = Path(os.environ.get(f"XDG_{kind}_HOME", str(home/default)))/"rex-agents"
+            if found.exists():
+                shutil.rmtree(found)
         manifest_path.unlink(missing_ok=True)
         return {"removed": True, "reason": "unchanged", "active_sessions": "unchanged"}
     for path, target in links.items():

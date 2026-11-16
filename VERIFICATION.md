@@ -354,4 +354,4 @@ Claude Code `2.1.325`. Run from a plain shell pane in a scratch Rex session, wit
 - `cleanup --name ra-resume-probe` closed it. `resume --name ra-resume-probe --task 'What word did I ask you to remember?'` opened a new tab whose screen held the first exchange and then `⏺ PELICAN`.
 - One transcript existed afterwards, `~/.claude/projects/-private-tmp/9a60432c-….jsonl`, not two.
 
-Evidence: `.verification/resume-2026-11-16/`. Fixture-only: the Codex path (`SessionStart` storing the ID, `codex resume --no-daemon … -- ID TASK`), the refusal while a pane exists, and a missing record. The suite has 83 tests.
+Evidence: `.verification/resume-2026-11-16/`. Fixture-only: the Codex path (`SessionStart` storing the ID, `codex resume --no-daemon … -- ID TASK`), the refusal while a pane exists, and a missing record. The suite has 85 tests.

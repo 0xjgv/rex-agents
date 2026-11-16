@@ -239,10 +239,11 @@ class Integration:
             atomic(self.locator((kind, native_id)), location)
             with contextlib.suppress(Error, LookupError, TypeError):
                 if worker := self.worker():
-                    # Codex has no flag to pin a conversation ID, so its worker's record learns it here.
+                    # Codex has no flag to pin a conversation ID, and Claude's /clear starts a new one; the record
+                    # learns each here. The hook stays quiet: a failed write leaves resume without an ID.
                     with contextlib.suppress(Error, OSError):
                         record = self.record(*worker)
-                        if kind == "codex" and (data := read(record)) and data.get("kind") == "codex":
+                        if (data := read(record)) and kind.startswith(str(data.get("kind"))):
                             atomic(record, dict(data, id=native_id))
                     context = KEEP_NAME if worker[0] == HUMAN else f"{KEEP_NAME}\n\n{OWNER}"
                     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
@@ -366,6 +367,7 @@ class Integration:
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
                env=None, permission_mode=None, disallowed_tools=None, resume=None):
         """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
+        given = locals()
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         # Bare --new-session names the session after the worker; a label lets several workers share one.
@@ -454,10 +456,10 @@ class Integration:
                 trust_claude(directory, config)
             if not resume:
                 # Written before the pane opens, so a Codex worker's SessionStart hook finds it. Relaunching overwrites it.
+                flags = {k: given[k] for k in RECORDED}
                 atomic(self.record(me, name), dict(
-                    kind=kind, id=native_id, cwd=str(directory), model=model, effort=effort, tab=tab, beside=beside,
-                    new_session=new_session, env=["".join(e) for e in env], permission_mode=permission_mode,
-                    disallowed_tools=disallowed_tools, launched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
+                    flags, kind=kind, id=native_id, cwd=str(directory), env=["".join(e) for e in env],
+                    launched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
             mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
                     and b["block_id"] != anchor["block_id"]
                     and b["session"] == anchor["session"] and b.get("window_id") == anchor.get("window_id")]
@@ -518,8 +520,12 @@ class Integration:
             names = sorted(p.stem for p in (self.state/me).glob("*.json"))
             raise Error(f"No record for worker {name} at {path}; yours: {', '.join(names) or 'none'}")
         if not data.get("id"):
-            raise Error(f"Worker {name}'s record at {path} has no conversation ID: its SessionStart hook never ran")
-        return self.launch(name, task=task, resume=data["id"], **{k: data.get(k) for k in RECORDED})
+            raise Error(f"Worker {name}'s record at {path} has no conversation ID yet; its SessionStart hook sets it")
+        flags = {k: data.get(k) for k in RECORDED}
+        # A --with anchor that has ended falls back to the default placement.
+        if flags["beside"] and not any(w["name"] == flags["beside"] for w in self.status()["workers"]):
+            flags["beside"] = None
+        return self.launch(name, task=task, resume=data["id"], **flags)
 
     def status(self):
         """The caller's live workers, oldest first. A worker with no row has no pane: it ended or was closed."""

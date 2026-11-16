@@ -957,6 +957,24 @@ class ResumeTests(Base):
         self.assertEqual(argv[:3], ["/bin/agent", "resume", "--no-daemon"])
         self.assertEqual(argv[-3:], ["--", "cx-1", "go on"])
 
+    def test_claude_record_follows_a_cleared_conversation(self):
+        self.agent()
+        block = self.launch("w1")["block_ids"][0]
+        self.app.block, driver = block, self.app.block
+        self.app.hook("claude-code", "SessionStart", {"session_id": "after-clear"})
+        self.app.hook("codex", "SessionStart", {"session_id": "other-harness"})
+        self.app.block = driver
+        self.assertEqual(self.record("w1")["id"], "after-clear")
+
+    def test_resume_beside_an_ended_worker_opens_beside_the_driver(self):
+        self.agent()
+        lead = self.launch("lead", tab=True)["block_ids"][0]
+        helper = self.launch("helper", beside="lead")["block_ids"][0]
+        self.app.drop(lead)
+        self.app.drop(helper)
+        self.app.resume("helper")
+        self.assertEqual(self.app.splits()[-1]["anchor_id"], self.driver)
+
     def test_cli_resume_takes_a_task(self):
         self.agent()
         self.app.drop(self.launch("w1")["block_ids"][0])
@@ -1159,12 +1177,14 @@ class InstallTests(Base):
     def test_uninstall_removes_only_ours(self):
         install.install(self.home)
         (self.home/".cache/rex-agents").mkdir(parents=True)
+        (self.home/".local/state/rex-agents/workers").mkdir(parents=True)
         install.install(self.home, remove=True)
         self.assertEqual({k: v for k, v in self.ours(self.claude).items() if v}, {})
         self.assertEqual(core.read(self.claude)["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "other")
         self.assertNotIn("hooks", core.read(self.codex))
         self.assertFalse((self.home/".local/bin/rex-agents").is_symlink())
         self.assertFalse((self.home/".cache/rex-agents").exists())
+        self.assertFalse((self.home/".local/state/rex-agents").exists())
         self.assertFalse(install.installed())
 
     def test_hook_inert_when_not_installed(self):
