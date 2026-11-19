@@ -42,7 +42,7 @@ RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks 
 RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
 # What `resume` needs to reopen a worker's own conversation with the flags it launched with.
 RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools",
-            "group")
+            "group", "append_system_prompt")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -54,6 +54,11 @@ class Error(Exception):
 class CommandError(Error):
     """The subprocess exited unsuccessfully, rather than timing out locally."""
     stdout = ""  # what it printed before failing: `rex wait` reports a pane's end there
+
+
+def toml_string(value):
+    """A TOML basic string for Codex `-c`: JSON's, except TOML also forbids a raw DEL."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def run(argv, *, env=None, stdin=None, timeout=12):
@@ -439,7 +444,7 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None, permission_mode=None, disallowed_tools=None, group=None,
+               env=None, permission_mode=None, disallowed_tools=None, group=None, append_system_prompt=None,
                resume=None):
         """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
         given = locals()
@@ -468,6 +473,8 @@ class Integration:
         # The flag is variadic: a name starting with "-" would end the list and read as a flag.
         if disallowed_tools is not None and not all(t and not t.startswith("-") for t in disallowed_tools):
             raise Error("Invalid tool: expected names that do not start with -")
+        if append_system_prompt is not None and "\0" in append_system_prompt:
+            raise Error("Invalid system prompt: expected text without NUL")
         # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
         config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
         if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
@@ -492,7 +499,7 @@ class Integration:
             argv = [executable, *(["resume"] if resume else []), "--no-daemon"]
         if kind == "codex":
             # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
-            argv += ["-c", "projects={" + json.dumps(str(directory), ensure_ascii=False) + '={trust_level="trusted"}}']
+            argv += ["-c", "projects={" + toml_string(str(directory)) + '={trust_level="trusted"}}']
         else:
             # A worker that prompts for permissions holds a bypass-mode driver's SendMessage until it accepts them.
             argv += ["--settings", '{"crossSessionInbound":"accept"}']
@@ -501,13 +508,17 @@ class Integration:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
         if permission_mode is not None:
             argv += ["--permission-mode", permission_mode]
+        if append_system_prompt is not None:
+            # Claude's "=" form keeps text that starts with "-" from reading as a flag; Codex has developer instructions.
+            argv += ([f"--append-system-prompt={append_system_prompt}"] if kind == "claude"
+                     else ["-c", "developer_instructions=" + toml_string(append_system_prompt)])
         if disallowed_tools is not None:
             # Variadic, so it goes last: the next flag, or the "--" before the task, ends its list.
             argv += ["--disallowedTools", *disallowed_tools]
         if kind == "codex":
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:
-                argv += ["-c", f"shell_environment_policy.set.{key}=" + json.dumps(value, ensure_ascii=False)]
+                argv += ["-c", f"shell_environment_policy.set.{key}=" + toml_string(value)]
         # The pane's environment may put the state directory elsewhere, so the hook gets the record's path.
         argv = ["/usr/bin/env", f"{RECORD}={self.record(me, name)}", *("".join(e) for e in env), *argv]
         # `codex resume` takes the conversation ID, then the task, as positionals.
