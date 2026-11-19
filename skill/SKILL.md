@@ -18,9 +18,9 @@ Never rename a Rex session, tab, or pane: no `rex session rename`, even when Rex
 | fable | `claude-fable-5-2` | Claude Code |
 | sonnet | `claude-sonnet-5-5` | Claude Code |
 | haiku | `claude-haiku-5-5` | Claude Code |
-| sol | `gpt-6.1-sol` | Codex |
+| sol | `gpt-6.2-sol` | Codex |
 | terra | `gpt-6.1-terra` | Codex |
-| astra | `gpt-6-astra` | Codex |
+| astra | `gpt-6.2-astra` | Codex |
 | luna | `gpt-6-luna` | Codex |
 
 Claude models run in Claude Code and GPT models run in Codex. Honor any model, harness, effort, worker count, or cross-harness comparison the user requests. For choices the user leaves open, start with the role defaults below. You may change the model, harness, effort, or worker count to fit the task. When you change a default, give the user a one-sentence reason with your picks.
@@ -43,7 +43,7 @@ Map each short name through the model table and tell the user your picks and eff
 Write the task to a file, then:
 
 ```sh
-rex-agents launch --name sol-plan --cwd /absolute/project --model gpt-6.1-sol --effort high --task-file /path/task.txt
+rex-agents launch --name sol-plan --cwd /absolute/project --model gpt-6.2-sol --effort high --task-file /path/task.txt
 ```
 
 Names are unique across Rex: 1–64 letters, digits, `_`, or `-`. The task is passed once, literally; no worktree is created. The result says `registration: pending`; the worker is ready when it messages you. On `Launch outcome uncertain`, look for its name in `rex-agents status` before retrying.

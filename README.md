@@ -15,7 +15,7 @@ Reason's Claude and Codex integrations must be enabled separately through suppor
 
 ```sh
 rex-agents launch --name reviewer --cwd /absolute/project --model claude-opus-5-5 --effort xhigh --task-file /tmp/task.txt
-rex-agents launch --name helper --cwd /absolute/project --model gpt-6.1-sol --effort high --task-file /tmp/task.txt
+rex-agents launch --name helper --cwd /absolute/project --model gpt-6.2-sol --effort high --task-file /tmp/task.txt
 rex-agents cleanup
 ```
 
