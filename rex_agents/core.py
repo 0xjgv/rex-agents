@@ -41,7 +41,8 @@ RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks 
           "End your turn and put the question in your final reply; the agent that launched you will get it answered.")
 RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
 # What `resume` needs to reopen a worker's own conversation with the flags it launched with.
-RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools")
+RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools",
+            "append_system_prompt")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -366,7 +367,7 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None, permission_mode=None, disallowed_tools=None, resume=None):
+               env=None, permission_mode=None, disallowed_tools=None, append_system_prompt=None, resume=None):
         """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
         given = locals()
         if not re.fullmatch(NAME, name):
@@ -392,6 +393,8 @@ class Integration:
         # The flag is variadic: a name starting with "-" would end the list and read as a flag.
         if disallowed_tools is not None and not all(t and not t.startswith("-") for t in disallowed_tools):
             raise Error("Invalid tool: expected names that do not start with -")
+        if append_system_prompt is not None and "\0" in append_system_prompt:
+            raise Error("Invalid system prompt: expected text without NUL")
         # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
         config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
         if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
@@ -422,6 +425,10 @@ class Integration:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]
         if permission_mode is not None:
             argv += ["--permission-mode", permission_mode]
+        if append_system_prompt is not None:
+            # Claude's "=" form keeps text that starts with "-" from reading as a flag; Codex has developer instructions.
+            argv += ([f"--append-system-prompt={append_system_prompt}"] if kind == "claude"
+                     else ["-c", "developer_instructions=" + json.dumps(append_system_prompt, ensure_ascii=False)])
         if disallowed_tools is not None:
             # Variadic, so it goes last: the next flag, or the "--" before the task, ends its list.
             argv += ["--disallowedTools", *disallowed_tools]

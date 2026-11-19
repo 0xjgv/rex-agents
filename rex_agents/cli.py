@@ -31,6 +31,8 @@ def parser():
     launch.add_argument("--effort", help="Native worker effort; omitted values inherit")
     launch.add_argument("--permission-mode", metavar="MODE", help="Claude Code permission mode; omitted values inherit")
     launch.add_argument("--disallowed-tools", nargs="+", metavar="TOOL", help="Claude Code tools to remove from the worker")
+    launch.add_argument("--append-system-prompt-file", metavar="FILE",
+                        help="Append this file's text to the worker's system prompt (Codex: developer instructions)")
     launch.add_argument("--env", action="append", metavar="KEY=VALUE", help="Set a worker variable; repeatable")
     where = launch.add_mutually_exclusive_group()
     where.add_argument("--tab", action="store_true", help="Open the worker in a new tab of the driver's session")
@@ -61,7 +63,9 @@ def main(argv=None):
         if args.command == "launch":
             result = app.launch(args.name, args.cwd, args.model, task(args), effort=args.effort, tab=args.tab,
                                 beside=args.beside, new_session=args.new_session, env=args.env,
-                                permission_mode=args.permission_mode, disallowed_tools=args.disallowed_tools)
+                                permission_mode=args.permission_mode, disallowed_tools=args.disallowed_tools,
+                                append_system_prompt=args.append_system_prompt_file
+                                and Path(args.append_system_prompt_file).read_text())
         elif args.command == "resume":
             result = app.resume(args.name, task(args))
         elif args.command == "cleanup":

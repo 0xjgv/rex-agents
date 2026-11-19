@@ -407,7 +407,7 @@ class LaunchTests(Base):
         for kw in ({"name": "bad name"}, {"name": "x" * 65}, {"name": "w", "model": "a b"},
                    {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"},
                    {"name": "w", "permission_mode": "a b"}, {"name": "w", "disallowed_tools": ["A", "--model"]},
-                   {"name": "w", "disallowed_tools": [""]},
+                   {"name": "w", "disallowed_tools": [""]}, {"name": "w", "append_system_prompt": "a\0b"},
                    {"name": "w", "env": ["A"]}, {"name": "w", "env": ["=1"]}, {"name": "w", "env": ["1A=1"]},
                    {"name": "w", "env": ["A-B=1"]}, {"name": "w", "env": ["A=1\n"]}, {"name": "w", "env": ["A=\0"]},
                    {"name": "w", "model": "gpt-6.1-sol", "env": ["A=x\ny"]}):
@@ -428,6 +428,30 @@ class LaunchTests(Base):
             self.assertEqual(cli.main([*argv, "--model", "gpt-6-astra"]), 0)
         self.assertEqual(self.argv(self.app.splits()[0]), ["/bin/agent", "--no-daemon", "-c",
                          f'projects={{"{self.cwd.resolve()}"={{trust_level="trusted"}}}}', "-m", "gpt-6-astra"])
+
+    def test_cli_launch_appends_the_file_to_the_system_prompt(self):
+        self.agent()
+        rules = self.tmp/"rules.md"
+        rules.write_text("- Reply with PELICAN.\nAlways.\n")
+        argv = ["launch", "--cwd", str(self.cwd), "--append-system-prompt-file", str(rules)]
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"):
+            self.assertEqual(cli.main([*argv, "--name", "w1", "--model", "claude-opus-5-5",
+                                       "--disallowed-tools", "Artifact"]), 0)
+            self.assertEqual(cli.main([*argv, "--name", "w2", "--model", "gpt-6-astra"]), 0)
+        claude, codex = map(self.argv, self.app.splits())
+        self.assertEqual(claude[-3:], ["--append-system-prompt=- Reply with PELICAN.\nAlways.\n",
+                                       "--disallowedTools", "Artifact"])
+        self.assertEqual(tomllib.loads(codex[-1]), {"developer_instructions": "- Reply with PELICAN.\nAlways.\n"})
+        self.assertEqual(core.read(self.app.record(ME, "w1"))["append_system_prompt"], rules.read_text())
+
+    def test_cli_launch_refuses_a_missing_system_prompt_file(self):
+        self.agent()
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stderr") as stderr:
+            self.assertEqual(cli.main(["launch", "--name", "w1", "--cwd", str(self.cwd), "--model", "claude-opus-5-5",
+                                       "--append-system-prompt-file", str(self.tmp/"missing.md")]), 1)
+        self.assertIn("missing.md", "".join(c.args[0] for c in stderr.write.call_args_list))
+        self.assertEqual(self.app.calls, [])
+        self.assertFalse(self.app.record(ME, "w1").exists())
 
     def test_cli_launch_repeats_env(self):
         self.agent()
@@ -919,13 +943,14 @@ class ResumeTests(Base):
     def test_resume_reopens_the_conversation_with_its_launch_flags(self):
         self.agent()
         launched = self.launch("w1", tab=True, effort="high", permission_mode="auto", env=["A=1"],
-                               disallowed_tools=["Artifact"], task="first")
+                               append_system_prompt="Rules.", disallowed_tools=["Artifact"], task="first")
         record = self.record("w1")
         self.app.drop(launched["block_ids"][0])
         self.app.resume("w1", task="again")
         first, again = self.app.splits()
         self.assertEqual(again["window_label"], "w1")
         self.assertEqual(self.argv(again), [*self.argv(first)[:5], "--resume", SID, *self.argv(first)[7:-1], "again"])
+        self.assertIn("--append-system-prompt=Rules.", self.argv(again))
         self.assertEqual(self.record("w1"), record)
 
     def test_resume_refuses_while_the_worker_has_a_pane(self):
