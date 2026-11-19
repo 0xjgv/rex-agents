@@ -1050,6 +1050,27 @@ class StatusTests(Base):
         human = self.app.add("session:a", "rex-agents:-:mine")
         self.assertEqual([w["block"] for w in self.app.status()["workers"]], [human])
 
+    def test_all_lists_every_owners_workers_in_every_session(self):
+        self.agent()
+        a = self.app.add("session:a", f"rex-agents:{ME}:a")
+        self.app.add("session:a", "shell")
+        x = self.app.add("session:b", "rex-agents:feedfacefeedface:x")
+        h = self.app.add("session:b", "rex-agents:-:human")
+        mine = dict(workers=[dict(name="a", session="session:a", block=a)])
+        self.assertEqual(self.app.status(), mine)
+        self.assertEqual(self.app.status(every=True), dict(workers=[
+            dict(name="a", owner=ME, session="session:a", block=a),
+            dict(name="x", owner="feedfacefeedface", session="session:b", block=x),
+            dict(name="human", owner="-", session="session:b", block=h)]))
+        self.assertEqual(self.app.status(), mine)
+
+    def test_all_skips_a_session_that_closes_mid_read(self):
+        self.app.ghosts = ["session:gone"]
+        b = self.app.add("session:b", "rex-agents:feedfacefeedface:x")
+        self.assertEqual(self.app.status(every=True),
+                         dict(workers=[dict(name="x", owner="feedfacefeedface", session="session:b", block=b)]))
+        self.assertIn(("block", "ls", "-s", "session:gone", "--json"), self.app.calls)
+
     def test_wait_reports_how_the_pane_ended(self):
         self.agent()
         ends = {"quit": (0, '{"exit_code":0}\n'), "crashed": (1, '{"exit_code":-1,"error":"signal: killed"}\n'),
@@ -1095,6 +1116,9 @@ class StatusTests(Base):
                 mock.patch("sys.stdout", new=io.StringIO()) as out:
             self.assertEqual(cli.main(["status"]), 0)
             self.assertEqual(cli.main(["wait", "--name", "w1"]), 0)
+            fake.status.assert_called_with()
+            self.assertEqual(cli.main(["status", "--all"]), 0)
+            fake.status.assert_called_with(every=True)
         fake.wait.assert_called_with("w1")
         self.assertIn('"workers": []', out.getvalue())
         self.assertIn('"gone": true', out.getvalue())

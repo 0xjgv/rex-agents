@@ -622,8 +622,13 @@ class Integration:
             flags["beside"] = None
         return self.launch(name, task=task, resume=data["id"], **flags)
 
-    def status(self):
-        """The caller's live workers, oldest first. A worker with no row has no pane: it ended or was closed."""
+    def status(self, every=False):
+        """The caller's live workers, oldest first. A worker with no row has no pane: it ended or was closed.
+
+        With every, all live workers in every session, whoever launched them, each with its owner."""
+        if every:
+            return dict(workers=[dict(name=w[1], owner=w[0], session=b["session"], block=b["block_id"])
+                                 for b in self.panes() if (w := parse(b.get("label")))])
         identity = native_identity()
         with contextlib.suppress(Error):
             self.where(identity)

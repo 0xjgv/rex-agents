@@ -62,7 +62,7 @@ When driving from Codex, add `--group codex` unless the user requests another pl
 
 A worker that exits sends no message. For a worker you keep across turns, run `rex-agents wait --name NAME` as a background command right after its launch (Claude Code: `run_in_background`). It blocks until that worker's pane ends, and its exit wakes you. It prints `ended` with an `exit_code` when the worker's program exited, `ended` with only a `block_id` when the pane was closed, as `cleanup` does, or `gone` when no pane of yours has that name. On an end you did not cause, tell the user, and if its work is still owed, reopen it on its own conversation with `rex-agents resume --name NAME --task "..."`: same placement and flags, full context. Its watchers and your `wait` do not come back; run `wait` again. `launch` with the same name starts a fresh conversation instead.
 
-`rex-agents status` lists your live workers with their session and block. A worker missing from it has no pane. Read a worker's screen with `rex capture -s SESSION -b BLOCK --trim`.
+`rex-agents status` lists your live workers with their session and block. A worker missing from it has no pane. `rex-agents status --all` lists every live worker in every session, whoever launched it, each with its `owner`: the 16-character hash of the driver's identity, or `-` for a human. Read a worker's screen with `rex capture -s SESSION -b BLOCK --trim`.
 
 ## Collaborate
 
