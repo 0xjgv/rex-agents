@@ -56,6 +56,11 @@ class CommandError(Error):
     stdout = ""  # what it printed before failing: `rex wait` reports a pane's end there
 
 
+def toml_string(value):
+    """A TOML basic string for Codex `-c`: JSON's, except TOML also forbids a raw DEL."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
 def run(argv, *, env=None, stdin=None, timeout=12):
     try:
         result = subprocess.run([str(a) for a in argv], input=stdin, text=True,
@@ -416,7 +421,7 @@ class Integration:
             argv = [executable, *(["resume"] if resume else []), "--no-daemon"]
         if kind == "codex":
             # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
-            argv += ["-c", "projects={" + json.dumps(str(directory), ensure_ascii=False) + '={trust_level="trusted"}}']
+            argv += ["-c", "projects={" + toml_string(str(directory)) + '={trust_level="trusted"}}']
         else:
             # A worker that prompts for permissions holds a bypass-mode driver's SendMessage until it accepts them.
             argv += ["--settings", '{"crossSessionInbound":"accept"}']
@@ -428,14 +433,14 @@ class Integration:
         if append_system_prompt is not None:
             # Claude's "=" form keeps text that starts with "-" from reading as a flag; Codex has developer instructions.
             argv += ([f"--append-system-prompt={append_system_prompt}"] if kind == "claude"
-                     else ["-c", "developer_instructions=" + json.dumps(append_system_prompt, ensure_ascii=False)])
+                     else ["-c", "developer_instructions=" + toml_string(append_system_prompt)])
         if disallowed_tools is not None:
             # Variadic, so it goes last: the next flag, or the "--" before the task, ends its list.
             argv += ["--disallowedTools", *disallowed_tools]
         if kind == "codex":
             # Codex tool shells inherit only core variables, so set each one for them too.
             for key, _, value in env:
-                argv += ["-c", f"shell_environment_policy.set.{key}=" + json.dumps(value, ensure_ascii=False)]
+                argv += ["-c", f"shell_environment_policy.set.{key}=" + toml_string(value)]
         # The pane's environment may put the state directory elsewhere, so the hook gets the record's path.
         argv = ["/usr/bin/env", f"{RECORD}={self.record(me, name)}", *("".join(e) for e in env), *argv]
         # `codex resume` takes the conversation ID, then the task, as positionals.

@@ -432,16 +432,16 @@ class LaunchTests(Base):
     def test_cli_launch_appends_the_file_to_the_system_prompt(self):
         self.agent()
         rules = self.tmp/"rules.md"
-        rules.write_text("- Reply with PELICAN.\nAlways.\n")
+        rules.write_text("- Reply with PELICAN.\nAlways.\x7f\n")
         argv = ["launch", "--cwd", str(self.cwd), "--append-system-prompt-file", str(rules)]
         with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"):
             self.assertEqual(cli.main([*argv, "--name", "w1", "--model", "claude-opus-5-5",
                                        "--disallowed-tools", "Artifact"]), 0)
             self.assertEqual(cli.main([*argv, "--name", "w2", "--model", "gpt-6-astra"]), 0)
         claude, codex = map(self.argv, self.app.splits())
-        self.assertEqual(claude[-3:], ["--append-system-prompt=- Reply with PELICAN.\nAlways.\n",
+        self.assertEqual(claude[-3:], ["--append-system-prompt=- Reply with PELICAN.\nAlways.\x7f\n",
                                        "--disallowedTools", "Artifact"])
-        self.assertEqual(tomllib.loads(codex[-1]), {"developer_instructions": "- Reply with PELICAN.\nAlways.\n"})
+        self.assertEqual(tomllib.loads(codex[-1]), {"developer_instructions": "- Reply with PELICAN.\nAlways.\x7f\n"})
         self.assertEqual(core.read(self.app.record(ME, "w1"))["append_system_prompt"], rules.read_text())
 
     def test_cli_launch_refuses_a_missing_system_prompt_file(self):
