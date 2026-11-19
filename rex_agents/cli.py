@@ -42,7 +42,8 @@ def parser():
     tasks(resume)
     cleanup = commands.add_parser("cleanup", help="Close workers owned by this native driver, including unfinished work")
     cleanup.add_argument("--name", help="Close only this owned worker")
-    commands.add_parser("status", help="List this driver's live workers")
+    status = commands.add_parser("status", help="List this driver's live workers")
+    status.add_argument("--all", action="store_true", help="List every live worker in every session, with its owner")
     wait = commands.add_parser("wait", help="Block until one of this driver's workers ends, then print how")
     wait.add_argument("--name", required=True)
     commands.add_parser("install")
@@ -69,7 +70,7 @@ def main(argv=None):
             print(json.dumps(result, indent=2))
             return int(bool(result["uncertain"]))
         elif args.command == "status":
-            result = app.status()
+            result = app.status(every=True) if args.all else app.status()
         elif args.command == "wait":
             result = app.wait(args.name)
         elif args.command in ("install", "uninstall"):
