@@ -42,7 +42,7 @@ RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks 
 RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
 # What `resume` needs to reopen a worker's own conversation with the flags it launched with.
 RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools",
-            "append_system_prompt")
+            "group", "append_system_prompt")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -165,6 +165,7 @@ def parse(label):
     if not isinstance(label, str) or not label.startswith(PREFIX):
         return None
     found, _, name = label[len(PREFIX):].partition(":")
+    name = name.removesuffix(":group")
     return (found, name) if found and name else None
 
 
@@ -289,12 +290,14 @@ class Integration:
         self.reason("send", person, "--notify", "--from", ":".join(identity), identity=identity,
                     stdin=f"{worker[1]} is waiting in its Rex pane: {detail}")
 
-    def where(self, identity):
+    def where(self, identity, *, required=True):
         """Fill the driver's pane from its SessionStart locator when the shell lacks Rex context."""
         if self.session and self.block:
             return
         location = read(self.locator(identity), None) if identity else None
         if not location:
+            if not required:
+                return
             raise Error("No Rex pane known for this conversation; pass --session and --block")
         self.server = self.server or location["server"]
         self.session = self.session or location["session"]
@@ -327,6 +330,75 @@ class Integration:
                 raise Error("Incompatible Rex block listing")
             rows += [dict(row, session=name) for row in data["blocks"]]
         return sorted(rows, key=lambda row: row["block_id"])
+
+    def reflow_group(self, session, window_id, me):
+        """Rebuild a worker-only tab as equal-height rows, retaining the focused block."""
+        try:
+            panes = [b for b in self.panes(session) if b.get("window_id") == window_id]
+        except CommandError as exc:
+            if re.search(NOT_FOUND, str(exc)):
+                return
+            raise
+        if not panes or any((parse(b.get("label")) or (None,))[0] != me for b in panes):
+            return
+        if not any(b.get("label", "").endswith(":group") for b in panes):
+            return
+        windows = decode(self.rex("window", "ls", "-s", session, "--json"))["windows"]
+        window = next((w for w in windows if w["window_id"] == window_id), None)
+        if not window:
+            return
+        if len(window.get("layers", [])) != 1:
+            raise Error("Group tab layout changed; inspect it before retrying")
+        root = window["layers"][0]["layout"]
+        ordered = [b["block_id"] for b in panes]
+        if set(leaves(root)) != set(ordered):
+            raise Error("Group tab layout changed; inspect it before retrying")
+        count = len(ordered)
+        row_count = (count + 2) // 3
+        width, extra = divmod(count, row_count)
+        rows, offset = [], 0
+        for n in range(row_count):
+            size = width + (n < extra)
+            rows.append(ordered[offset:offset + size])
+            offset += size
+
+        def tree(parts, direction):
+            if len(parts) == 1:
+                return parts[0]
+            return dict(direction=direction, ratio=1 / len(parts), before=parts[0],
+                        after=tree(parts[1:], direction))
+
+        target = tree([tree(row, "horizontal") for row in rows], "vertical")
+
+        def target_leaves(node):
+            return [node] if isinstance(node, str) else target_leaves(node["before"]) + target_leaves(node["after"])
+
+        def matches(actual, desired):
+            if isinstance(desired, str):
+                return actual.get("block_id") == desired
+            split = actual.get("split")
+            return bool(split and split["direction"] == desired["direction"]
+                        and abs(split["ratio"] - desired["ratio"]) < 1e-6
+                        and matches(split["before"], desired["before"]) and matches(split["after"], desired["after"]))
+
+        if matches(root, target):
+            return
+        seed = window.get("focused_block_id")
+        seed = seed if seed in ordered else ordered[0]
+
+        def arrange(node, anchor):
+            if isinstance(node, str):
+                return
+            anchor_before = anchor in target_leaves(node["before"])
+            held, other = (node["before"], node["after"]) if anchor_before else (node["after"], node["before"])
+            moved = target_leaves(other)[0]
+            request = dict(session_id=session, block_id=moved, anchor_block_id=anchor, direction=node["direction"],
+                           side="after" if anchor_before else "before", ratio=node["ratio"])
+            self.rex("api", "call", "session.move_block", "-", stdin=json.dumps(request))
+            arrange(held, anchor)
+            arrange(other, moved)
+
+        arrange(target, seed)
 
     def place(self, driver, mine, grid=False):
         """(anchor, direction, ratio, moved, widen) for the next worker.
@@ -372,13 +444,16 @@ class Integration:
             yield
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
-               env=None, permission_mode=None, disallowed_tools=None, append_system_prompt=None, resume=None):
+               env=None, permission_mode=None, disallowed_tools=None, group=None, append_system_prompt=None,
+               resume=None):
         """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
         given = locals()
         if not re.fullmatch(NAME, name):
             raise Error("Worker name must be 1–64 letters, digits, underscores, or hyphens")
         # Bare --new-session names the session after the worker; a label lets several workers share one.
         session_label = name if new_session is True else new_session
+        if group is not None:
+            session_label = group
         if session_label is not False and not re.fullmatch(NAME, session_label):
             raise Error("Session label must be 1–64 letters, digits, underscores, or hyphens")
         for label, value in (("model", model), ("effort", effort), ("permission mode", permission_mode)):
@@ -411,7 +486,10 @@ class Integration:
             raise Error(f"Missing executable: {kind}")
         identity = native_identity()
         me = owner(identity)
-        self.where(identity)
+        if group is not None and not identity:
+            raise Error("--group requires a native conversation identity")
+        relative = not (new_session or beside or group)
+        self.where(identity, required=relative)
         own = self.own(identity)
         # Claude takes a conversation ID up front; Codex reports its own to the SessionStart hook.
         native_id = resume or (str(uuid.uuid4()) if kind == "claude" else None)
@@ -449,11 +527,11 @@ class Integration:
             tail.append(task)
         if tail:
             argv += ["--", *tail]
-        label = f"{PREFIX}{me}:{name}"
+        label = f"{PREFIX}{me}:{name}" + (":group" if group else "")
         with self.lock():
             blocks = self.panes()
             driver = next((b for b in blocks if b["block_id"] == self.block), None)
-            if driver is None:
+            if relative and driver is None:
                 raise Error(f"Driver pane {self.block} not found in Rex")
             if any((parent := parse(b.get("label"))) and parent[0] != HUMAN for b in blocks if b["block_id"] in own):
                 raise Error("Owned workers cannot launch nested workers")
@@ -465,6 +543,20 @@ class Integration:
                 anchor = next((b for b in blocks if parse(b.get("label")) == (me, beside)), None)
                 if anchor is None:
                     raise Error(f"No worker {beside} of yours to open beside")
+            session = anchor["session"] if anchor else None
+            if new_session or group:
+                taken = set() if group else {b["session"] for b in blocks if (parse(b.get("label")) or (None,))[0] != me}
+                matches = [s["session_id"] for s in decode(self.rex("ls", "--json")).get("sessions", [])
+                           if s.get("label") == session_label and s["session_id"] not in taken]
+                if group and len(matches) > 1:
+                    raise Error(f"Multiple Rex sessions named {group}; choose a unique group name")
+                session = next(iter(matches), None)
+            if group:
+                # Only split a tab occupied entirely by this conversation's workers.
+                members = [b for b in blocks if b["session"] == session]
+                other_windows = {b["window_id"] for b in members if (parse(b.get("label")) or (None,))[0] != me
+                                 or b["block_id"] in own}
+                anchor = next((b for b in members if b["window_id"] not in other_windows), None)
             if kind == "claude":
                 trust_claude(directory, config)
             if not resume:
@@ -473,32 +565,28 @@ class Integration:
                 atomic(self.record(me, name), dict(
                     flags, kind=kind, id=native_id, cwd=str(directory), env=["".join(e) for e in env],
                     launched_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())))
-            mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
-                    and b["block_id"] != anchor["block_id"]
-                    and b["session"] == anchor["session"] and b.get("window_id") == anchor.get("window_id")]
             # The caller's PATH goes first, as `rex split` sends it.
             options = dict(command=argv, cwd=str(directory),
                            path_prepend=[p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
             layout = {"block": dict(flavor=TERMINAL, label=label, options=options)}
-            session = anchor["session"]
-            if new_session:
-                # A worker that ended on its own left its session behind, since a session outlives its last pane.
-                # Its relaunch moves back in, unless a pane that is not the caller's worker holds the session now.
-                taken = {b["session"] for b in blocks if (parse(b.get("label")) or (None,))[0] != me}
-                session = next((s["session_id"] for s in decode(self.rex("ls", "--json")).get("sessions", [])
-                                if s.get("label") == session_label and s["session_id"] not in taken), None)
-            if new_session and not session:
+            if (new_session or group) and not session:
                 # A Rex session named after the worker or the label. Rex attaches no client to it, so focus stays put.
                 method, moved, widen = "session.create", None, False
                 request = dict(label=session_label, initial_windows=[dict(window_label=name, layout=layout)])
-            elif tab or new_session:
+            elif tab or new_session or (group and not anchor):
                 # A tab of its own, named after the worker, in the driver's session or one with the session label.
                 method, moved, widen = "session.new_window", None, False
                 request = dict(session_id=session, window_label=name, focus=False, layout=layout)
             else:
                 # `rex split` takes only a pane as anchor; the API also takes a split, which a full column needs.
                 method = "session.new_split"
-                anchor_id, direction, ratio, moved, widen = self.place(anchor, mine, grid=bool(beside))
+                mine = [b for b in blocks if (w := parse(b.get("label"))) and w[0] == me and b["block_id"] not in own
+                        and b["block_id"] != anchor["block_id"] and b["session"] == session
+                        and b.get("window_id") == anchor.get("window_id")]
+                if group:
+                    anchor_id, direction, ratio, moved, widen = anchor["block_id"], "horizontal", 0.5, None, False
+                else:
+                    anchor_id, direction, ratio, moved, widen = self.place(anchor, mine, grid=bool(beside))
                 request = dict(session_id=anchor["session"], anchor_id=anchor_id, direction=direction, side="after",
                                ratio=ratio, focus=False, layout=layout)
             try:
@@ -521,6 +609,11 @@ class Integration:
                         self.rex("api", "call", method, "-", stdin=json.dumps(dict(request, session_id=anchor["session"])))
                 except Error as exc:
                     raise Error(f"{name} launched, but Rex did not finish balancing the columns: {exc}") from exc
+            if group and anchor:
+                try:
+                    self.reflow_group(session, anchor["window_id"], me)
+                except Error as exc:
+                    raise Error(f"{name} launched, but Rex did not finish arranging the grid: {exc}") from exc
             return dict(result, session_id=session, name=name, label=label, registration="pending")
 
     def resume(self, name, task=None):
@@ -556,10 +649,15 @@ class Integration:
 
     def wait(self, name):
         """Block until the caller's worker ends, then say how. Rex streams the end, so nothing polls."""
-        pane = next((w for w in self.status()["workers"] if w["name"] == name), None)
+        identity = native_identity()
+        with contextlib.suppress(Error):
+            self.where(identity)
+        me = owner(identity)
+        original = next((b for b in self.panes() if parse(b.get("label")) == (me, name)), None)
         gone = dict(name=name, gone=True)
-        if not pane:
+        if not original:
             return gone
+        pane = dict(name=name, session=original["session"], block=original["block_id"])
         try:
             ended = self.rex("wait", pane["block"], "-s", pane["session"], "--json", timeout=None)
         except CommandError as exc:
@@ -568,6 +666,13 @@ class Integration:
                 if "not found" in str(exc):
                     return gone
                 raise
+        if original.get("label", "").endswith(":group"):
+            with self.lock():
+                try:
+                    self.reflow_group(pane["session"], original["window_id"], me)
+                except CommandError as exc:
+                    if not re.search(NOT_FOUND, str(exc)):
+                        raise
         return dict(pane, ended=decode(ended))
 
     def cleanup(self, name=None):
@@ -617,6 +722,13 @@ class Integration:
                 if rows is None or item["block"] in {b["block_id"] for b in rows}:
                     result["closed"].remove(item)
                     result["uncertain"].append(dict(item, error=error))
+            if rows is not None:
+                changed = {(b["session"], b["window_id"]) for b, _ in owned}
+                for session, window in changed:
+                    try:
+                        self.reflow_group(session, window, me)
+                    except Error as exc:
+                        result["uncertain"].append(dict(session=session, error=f"Grid reflow failed: {exc}"))
             # A session outlives its last pane; close the ones this cleanup emptied.
             emptied = set() if rows is None else {i["session"] for i in result["closed"] + result["gone"]} - {
                 b["session"] for b in rows}

@@ -35,6 +35,7 @@ def parser():
                         help="Append this file's text to the worker's system prompt (Codex: developer instructions)")
     launch.add_argument("--env", action="append", metavar="KEY=VALUE", help="Set a worker variable; repeatable")
     where = launch.add_mutually_exclusive_group()
+    where.add_argument("--group", metavar="NAME", help="Share session NAME, with one worker grid per conversation")
     where.add_argument("--tab", action="store_true", help="Open the worker in a new tab of the driver's session")
     where.add_argument("--new-session", nargs="?", const=True, default=False, metavar="LABEL",
                        help="Open the worker in a tab of the Rex session LABEL, created if needed; LABEL defaults to the worker's name")
@@ -65,6 +66,7 @@ def main(argv=None):
             result = app.launch(args.name, args.cwd, args.model, task(args), effort=args.effort, tab=args.tab,
                                 beside=args.beside, new_session=args.new_session, env=args.env,
                                 permission_mode=args.permission_mode, disallowed_tools=args.disallowed_tools,
+                                group=args.group,
                                 append_system_prompt=args.append_system_prompt_file
                                 and Path(args.append_system_prompt_file).read_text())
         elif args.command == "resume":

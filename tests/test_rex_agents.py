@@ -66,6 +66,12 @@ class Fake(Integration):
             blocks[:] = [b for b in blocks if b["block_id"] != block]
             if self.layouts.get(session):
                 self.layouts[session] = prune(self.layouts[session], block)
+        # A tab closes with its last pane.
+        for window, (session, layout) in list(self.tabs.items()):
+            if layout := prune(layout, block):
+                self.tabs[window] = (session, layout)
+            else:
+                del self.tabs[window]
 
     def graft(self, node, anchor, wrap):
         if core.node_id(node) == anchor:
@@ -110,7 +116,7 @@ class Fake(Integration):
                 raise CommandError(f'session target "{args[3]}" not found')
             return json.dumps({"blocks": self.sessions[args[3]]})
         if args[:2] == ("window", "ls"):
-            tabs = [{"window_id": w, "layers": [{"layout": layout}]}
+            tabs = [{"window_id": w, "focused_block_id": self.focused, "layers": [{"layout": layout}]}
                     for w, (session, layout) in self.tabs.items() if session == args[3]]
             return json.dumps({"windows": [{"window_id": "w1", "focused_block_id": self.focused,
                                             "layers": [{"layout": self.layouts[args[3]]}]}, *tabs]})
@@ -168,10 +174,12 @@ class Fake(Integration):
             request = json.loads(stdin)
             self.edits.append(("move", request))
             session, block = request["session_id"], request["block_id"]
-            split = dict(split_id=f"split:m{block[6:]}", direction=request["direction"], ratio=0.5,
-                         before={"block_id": block})
-            self.edit(session, block, lambda layout: self.graft(prune(layout, block), request["anchor_block_id"],
-                                                                lambda old: {"split": dict(split, after=old)}))
+            split = dict(split_id=f"split:m{block[6:]}", direction=request["direction"], ratio=request.get("ratio", 0.5))
+            def wrap(old):
+                moved = {"block_id": block}
+                before, after = (moved, old) if request.get("side", "after") == "before" else (old, moved)
+                return {"split": dict(split, before=before, after=after)}
+            self.edit(session, block, lambda layout: self.graft(prune(layout, block), request["anchor_block_id"], wrap))
             return json.dumps({"created_split_id": split["split_id"], "revision": self.n})
         if args == ("api", "call", "session.resize_pane", "-"):
             request = json.loads(stdin)
@@ -748,6 +756,198 @@ class LaunchTests(Base):
         with self.assertRaisesRegex(Error, "--session and --block"):
             Fake(self.tmp/"cache").launch("w2", str(self.cwd), "claude-opus-5-5")
 
+    def test_group_creates_a_named_session_without_a_driver_pane(self):
+        self.agent("codex", "detached")
+        self.app.session = self.app.block = None
+        first = self.launch("reviewer", group="release_checks")
+        request = self.app.requests[-1]
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.create", "-"))
+        self.assertEqual((request["label"], request["initial_windows"][0]["window_label"]),
+                         ("release_checks", "reviewer"))
+        self.assertEqual(request["initial_windows"][0]["layout"]["block"]["label"],
+                         f"rex-agents:{owner(('codex', 'detached'))}:reviewer:group")
+        other = self.launch("researcher", group="research")
+        self.assertNotEqual(first["session_id"], other["session_id"])
+        self.assertEqual(self.app.names[other["session_id"]], "research")
+        self.assertEqual(self.app.layouts["session:a"], {"block_id": self.driver})
+
+    def assert_group_grid(self, layout, blocks, row_counts):
+        def rectangles(node, x=0, y=0, width=1, height=1):
+            split = node.get("split")
+            if not split:
+                return {node["block_id"]: (x, y, width, height)}
+            ratio = split["ratio"]
+            if split["direction"] == "horizontal":
+                return rectangles(split["before"], x, y, width * ratio, height) | \
+                    rectangles(split["after"], x + width * ratio, y, width * (1 - ratio), height)
+            return rectangles(split["before"], x, y, width, height * ratio) | \
+                rectangles(split["after"], x, y + height * ratio, width, height * (1 - ratio))
+
+        actual = rectangles(layout)
+        self.assertEqual(set(actual), set(blocks))
+        offset = 0
+        for row, count in enumerate(row_counts):
+            for col, block in enumerate(blocks[offset:offset + count]):
+                expected = (col / count, row / len(row_counts), 1 / count, 1 / len(row_counts))
+                for coordinate, value in zip(actual[block], expected):
+                    self.assertAlmostEqual(coordinate, value)
+            offset += count
+
+    def test_group_arranges_equal_rows_in_launch_order(self):
+        self.agent()
+        self.app.session = self.app.block = None
+        counts = ([1], [2], [3], [2, 2], [3, 2], [3, 3], [3, 2, 2], [3, 3, 2], [3, 3, 3])
+        blocks = []
+        for n, expected in enumerate(counts, 1):
+            result = self.launch(f"g{n}", group="team")
+            blocks += result["block_ids"]
+            self.assert_group_grid(self.app.layouts[result["session_id"]], blocks, expected)
+            if n > 1:
+                self.assertFalse(self.app.requests[-1]["focus"])
+        self.assertEqual(len(self.app.names), 1)
+        self.assertEqual(self.app.tabs, {})
+
+    def test_group_cleanup_reflows_surviving_workers(self):
+        self.agent()
+        workers = [self.launch(f"g{n}", group="team") for n in range(1, 6)]
+        session = workers[0]["session_id"]
+        self.app.cleanup(name="g2")
+        blocks = [w["block_ids"][0] for n, w in enumerate(workers, 1) if n != 2]
+        self.assert_group_grid(self.app.layouts[session], blocks, [2, 2])
+
+    def test_group_wait_reflows_after_a_worker_exits(self):
+        self.agent()
+        workers = [self.launch(f"g{n}", group="team") for n in range(1, 7)]
+        session = workers[0]["session_id"]
+        ended = workers[1]["block_ids"][0]
+        self.app.ends[ended] = (0, '{"exit_code":0}')
+        self.assertEqual(self.app.wait("g2")["ended"], {"exit_code": 0})
+        self.assert_group_grid(self.app.layouts[session],
+                               [w["block_ids"][0] for n, w in enumerate(workers, 1) if n != 2], [3, 2])
+
+    def test_group_reflow_never_moves_the_focused_worker(self):
+        self.agent()
+        workers = [self.launch(f"g{n}", group="team") for n in range(1, 4)]
+        focused = self.app.focused = workers[1]["block_ids"][0]
+        self.app.edits.clear()
+        workers.append(self.launch("g4", group="team"))
+        self.assert_group_grid(self.app.layouts[workers[0]["session_id"]],
+                               [w["block_ids"][0] for w in workers], [2, 2])
+        self.assertNotIn(focused, [r["block_id"] for kind, r in self.app.edits if kind == "move"])
+
+    def test_group_restores_equal_column_widths_after_a_column_closes(self):
+        self.agent()
+        workers = [self.launch(f"g{n}", group="team") for n in range(1, 4)]
+        session = workers[0]["session_id"]
+        self.app.drop(workers[0]["block_ids"][0])
+        self.launch("g4", group="team")
+
+        def widths(node, width=1):
+            split = node.get("split")
+            if not split or split["direction"] != "horizontal":
+                return [width]
+            return widths(split["before"], width * split["ratio"]) + \
+                widths(split["after"], width * (1 - split["ratio"]))
+
+        self.assertEqual(len(core.columns(self.app.layouts[session])), 3)
+        for width in widths(self.app.layouts[session]):
+            self.assertAlmostEqual(width, 1 / 3)
+
+    def test_group_shares_a_session_with_separate_tabs_for_each_owner(self):
+        self.agent()
+        first = self.launch("a1", group="team")
+        session = first["session_id"]
+        self.agent(native_id="other-driver")
+        second = self.launch("b1", group="team")
+        self.assertEqual(second["session_id"], session)
+        self.assertNotEqual(first["window_id"], second["window_id"])
+        self.assertEqual(self.app.requests[-1]["window_label"], "b1")
+        b2 = self.launch("b2", group="team")["block_ids"][0]
+        self.assertEqual(shape(self.app.tabs[second["window_id"]][1]),
+                         ("horizontal", second["block_ids"][0], b2))
+        self.agent()
+        a2 = self.launch("a2", group="team")["block_ids"][0]
+        self.assertEqual(shape(self.app.layouts[session]), ("horizontal", first["block_ids"][0], a2))
+        closed = self.app.cleanup()
+        self.assertEqual({p["name"] for p in closed["closed"]}, {"a1", "a2"})
+        self.assertIn(session, self.app.sessions)
+        self.assertEqual({b["block_id"] for b in self.app.sessions[session]}, {second["block_ids"][0], b2})
+        self.agent(native_id="other-driver")
+        self.app.cleanup()
+        self.assertNotIn(session, self.app.sessions)
+        self.assertIn("session:a", self.app.sessions)
+
+    def test_group_joins_a_surviving_pane_when_its_first_worker_exits(self):
+        self.agent()
+        self.launch("a1", group="team")
+        self.agent(native_id="other-driver")
+        first = self.launch("b1", group="team")
+        second = self.launch("b2", group="team")
+        self.app.drop(first["block_ids"][0])
+        third = self.launch("b3", group="team")
+        self.assertEqual((third["session_id"], self.app.requests[-1]["session_id"]),
+                         (first["session_id"], first["session_id"]))
+        self.assertEqual(shape(self.app.tabs[first["window_id"]][1]),
+                         ("horizontal", second["block_ids"][0], third["block_ids"][0]))
+        self.assertEqual(len(self.app.tabs), 1)
+
+    def test_group_reuses_an_empty_session_after_all_workers_exit(self):
+        self.agent()
+        first = self.launch("g1", group="team")
+        self.app.drop(first["block_ids"][0])
+        again = self.launch("g2", group="team")
+        self.assertEqual(again["session_id"], first["session_id"])
+        self.assertEqual(self.app.calls[-1], ("api", "call", "session.new_window", "-"))
+        self.assertEqual(len(self.app.names), 1)
+
+    def test_group_validates_its_label_and_requires_conversation_identity(self):
+        self.agent()
+        for label in ("", "-x", "a b", "x" * 65):
+            with self.subTest(label=label), self.assertRaises(Error):
+                self.launch("g1", group=label)
+        self.assertEqual(self.app.calls, [])
+        del os.environ["CLAUDE_CODE_SESSION_ID"]
+        with self.assertRaisesRegex(Error, "identity"):
+            self.launch("g1", group="team")
+        self.assertEqual(self.app.calls, [])
+
+    def test_group_cli_is_exclusive_and_passes_the_name_to_launch(self):
+        base = ["launch", "--name", "g1", "--model", "gpt-6-astra", "--group", "team"]
+        for extra in (["--tab"], ["--new-session", "other"], ["--with", "g2"]):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                cli.parser().parse_args(base + extra)
+        self.agent()
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"), \
+                contextlib.chdir(self.cwd):
+            self.assertEqual(cli.main(base), 0)
+        self.assertEqual(self.app.requests[-1]["label"], "team")
+
+    def test_detached_new_session_and_with_need_no_driver_pane(self):
+        self.agent()
+        self.app.session = self.app.block = None
+        first = self.launch("g1", new_session="outside")
+        second = self.launch("g2", beside="g1")
+        self.assertEqual(second["session_id"], first["session_id"])
+        self.assertEqual(shape(self.app.layouts[first["session_id"]]),
+                         ("horizontal", first["block_ids"][0], second["block_ids"][0]))
+        with self.assertRaisesRegex(Error, "--session and --block"):
+            self.launch("g3")
+
+    def test_detached_destination_cannot_bypass_a_known_worker_pane(self):
+        self.agent()
+        worker = self.app.add("session:a", "rex-agents:feedfacefeedface:parent")
+        self.app.session = self.app.block = None
+        for location in ("environment", "locator"):
+            if location == "environment":
+                os.environ["REX_BLOCK"] = worker
+            else:
+                del os.environ["REX_BLOCK"]
+                core.atomic(self.app.locator(DRIVER), dict(server="unix:s", session="session:a", block=worker))
+            for mode in (dict(group="team"), dict(new_session="team"), dict(beside="parent")):
+                with self.subTest(location=location, mode=mode), self.assertRaisesRegex(Error, "nested"):
+                    self.launch("g1", **mode)
+        self.assertEqual(self.app.requests, [])
+
     def test_identity_conflicts(self):
         os.environ.update(CODEX_THREAD_ID="cx", CLAUDECODE="1")
         with self.assertRaisesRegex(Error, "Conflicting"):
@@ -903,7 +1103,7 @@ class StatusTests(Base):
             block = self.app.add("session:a", f"rex-agents:{ME}:{name}")
             self.app.ends[block] = (code, payload)
             self.assertEqual(self.app.wait(name), dict(name=name, session="session:a", block=block, ended=json.loads(payload)))
-            self.assertEqual(self.app.calls[-1], ("wait", block, "-s", "session:a", "--json"))
+            self.assertIn(("wait", block, "-s", "session:a", "--json"), self.app.calls)
             self.assertIsNone(self.app.waited)
 
     def test_wait_on_a_missing_worker_is_gone(self):
@@ -1033,6 +1233,16 @@ class ResumeTests(Base):
         self.app.drop(helper)
         self.app.resume("helper")
         self.assertEqual(self.app.splits()[-1]["anchor_id"], self.driver)
+
+    def test_resume_reopens_a_grouped_worker_in_its_group(self):
+        self.agent()
+        first = self.launch("g1", group="team")
+        self.app.drop(self.launch("g2", group="team")["block_ids"][0])
+        self.assertEqual(self.record("g2")["group"], "team")
+        resumed = self.app.resume("g2")
+        self.assertEqual(resumed["session_id"], first["session_id"])
+        self.assertEqual(resumed["label"], f"rex-agents:{ME}:g2:group")
+        self.assertIn("--resume", self.argv(self.app.requests[-1]))
 
     def test_cli_resume_takes_a_task(self):
         self.agent()
