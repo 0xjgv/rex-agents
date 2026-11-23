@@ -42,7 +42,7 @@ RETURN = ("You are a subagent of a rex-agents worker, and only its driver talks 
 RECORD = "REX_AGENTS_RECORD"  # the worker's record, for its SessionStart hook
 # What `resume` needs to reopen a worker's own conversation with the flags it launched with.
 RECORDED = ("cwd", "model", "effort", "tab", "beside", "new_session", "env", "permission_mode", "disallowed_tools",
-            "group", "append_system_prompt")
+            "group", "append_system_prompt", "settings")
 NOT_FOUND = r'(block|session) target "[^"\n]+" not found'
 TERMINAL = "com.superlogical.terminal.shell"
 
@@ -445,7 +445,7 @@ class Integration:
 
     def launch(self, name, cwd, model, task=None, effort=None, tab=False, beside=None, new_session=False,
                env=None, permission_mode=None, disallowed_tools=None, group=None, append_system_prompt=None,
-               resume=None):
+               settings=None, resume=None):
         """Open a worker; with resume, the native conversation ID its record holds, reopen that conversation."""
         given = locals()
         if not re.fullmatch(NAME, name):
@@ -475,6 +475,14 @@ class Integration:
             raise Error("Invalid tool: expected names that do not start with -")
         if append_system_prompt is not None and "\0" in append_system_prompt:
             raise Error("Invalid system prompt: expected text without NUL")
+        if settings is not None and kind != "claude":
+            raise Error("--settings applies to Claude workers only")
+        try:
+            extra = {} if settings is None else json.loads(settings)
+        except ValueError:
+            extra = None
+        if not isinstance(extra, dict):
+            raise Error("Invalid --settings: expected a JSON object")
         # A Claude worker runs on its driver's login, settings, and hooks; the pane alone would start on the default ones.
         config = next((value for key, _, value in env if key == "CLAUDE_CONFIG_DIR"), None)
         if kind == "claude" and not config and (config := os.environ.get("CLAUDE_CONFIG_DIR")):
@@ -501,8 +509,9 @@ class Integration:
             # Codex splits dotted override keys literally; put the quoted path inside a TOML value.
             argv += ["-c", "projects={" + toml_string(str(directory)) + '={trust_level="trusted"}}']
         else:
-            # A worker that prompts for permissions holds a bypass-mode driver's SendMessage until it accepts them.
-            argv += ["--settings", '{"crossSessionInbound":"accept"}']
+            # A worker that prompts for permissions holds a bypass-mode driver's SendMessage until it accepts them,
+            # so the caller's --settings cannot turn that off.
+            argv += ["--settings", json.dumps({**extra, "crossSessionInbound": "accept"}, separators=(",", ":"))]
         argv += ["--model" if kind == "claude" else "-m", model]
         if effort is not None:
             argv += ["--effort", effort] if kind == "claude" else ["-c", "model_reasoning_effort=" + json.dumps(effort)]

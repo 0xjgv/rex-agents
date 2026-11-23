@@ -54,6 +54,8 @@ A Claude worker starts in its settings' permission mode and may stop on a prompt
 
 `--append-system-prompt-file FILE` appends the file's text to a Claude worker's system prompt, so standing rules survive compaction; a Codex worker gets it as developer instructions. Keep the task file for the task itself. `resume` reuses the text launch read.
 
+`--settings JSON` passes Claude Code settings to a Claude worker, for example `{"autoMemoryDirectory": "<dir>"}` to give it a memory shared with other workers; a Codex worker refuses it.
+
 `--env KEY=VALUE`, repeatable, sets a variable in the worker, Codex tool shells included. If a detached shell cannot find `rex` on PATH, set `REX_AGENTS_REX` to the absolute path of the installed Rex CLI for the launch and subsequent `rex-agents` commands, such as `REX_AGENTS_REX="/absolute/path/to/rex" rex-agents launch …`.
 
 When driving from Codex, add `--group codex` unless the user requests another placement. The group label is supplied by the caller. Use `--group NAME` with any valid name to create or join that named Rex session. Your conversation gets one tab, named after its first worker, and subsequent workers join surviving panes in that tab. Another conversation gets its own tab in the same session. Workers fill equal-height rows in launch order, with equal widths within each row. Four workers form a 2×2 grid, five form rows of 3+2, and seven form 3+2+2. Groups require your native conversation identity and work from outside Rex. The launcher reuses an existing session with that label, including when it has other tabs. If several sessions have the same label, choose a unique group label before launching. Cleanup closes only your workers and leaves other conversations' tabs open.

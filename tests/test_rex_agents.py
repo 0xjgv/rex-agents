@@ -416,6 +416,8 @@ class LaunchTests(Base):
                    {"name": "w", "model": "llama-4"}, {"name": "w", "effort": "$(id)"},
                    {"name": "w", "permission_mode": "a b"}, {"name": "w", "disallowed_tools": ["A", "--model"]},
                    {"name": "w", "disallowed_tools": [""]}, {"name": "w", "append_system_prompt": "a\0b"},
+                   {"name": "w", "settings": "[]"}, {"name": "w", "settings": "{"},
+                   {"name": "w", "model": "gpt-6.1-sol", "settings": "{}"},
                    {"name": "w", "env": ["A"]}, {"name": "w", "env": ["=1"]}, {"name": "w", "env": ["1A=1"]},
                    {"name": "w", "env": ["A-B=1"]}, {"name": "w", "env": ["A=1\n"]}, {"name": "w", "env": ["A=\0"]},
                    {"name": "w", "model": "gpt-6.1-sol", "env": ["A=x\ny"]}):
@@ -451,6 +453,21 @@ class LaunchTests(Base):
                                        "--disallowedTools", "Artifact"])
         self.assertEqual(tomllib.loads(codex[-1]), {"developer_instructions": "- Reply with PELICAN.\nAlways.\x7f\n"})
         self.assertEqual(core.read(self.app.record(ME, "w1"))["append_system_prompt"], rules.read_text())
+
+    def test_cli_launch_merges_settings_and_resume_keeps_them(self):
+        self.agent()
+        settings = '{"autoMemoryDirectory": "/m", "crossSessionInbound": "deny"}'
+        with mock.patch.object(cli, "Integration", return_value=self.app), mock.patch("sys.stdout"):
+            self.assertEqual(cli.main(["launch", "--name", "w1", "--cwd", str(self.cwd), "--model", "claude-opus-5-5",
+                                       "--settings", settings]), 0)
+        argv = self.argv(self.app.splits()[0])
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]),
+                         {"autoMemoryDirectory": "/m", "crossSessionInbound": "accept"})
+        self.assertEqual(core.read(self.app.record(ME, "w1"))["settings"], settings)
+        self.app.drop(self.launch("w2", settings=settings)["block_ids"][0])
+        self.app.resume("w2")
+        again = self.argv(self.app.splits()[-1])
+        self.assertEqual(again[again.index("--settings") + 1], argv[argv.index("--settings") + 1])
 
     def test_cli_launch_refuses_a_missing_system_prompt_file(self):
         self.agent()
