@@ -23,13 +23,16 @@ def paths(home):
     }
 
 
+# By name, like the other tools' hooks: PATH holds ~/.local/bin, where install links rex-agents,
+# and bin/rex-agents already needs it to find python3.13.
 def hook_command(kind, event):
-    return shlex.join([str(CLI), "_hook", kind, event])
+    return shlex.join(["rex-agents", "_hook", kind, event])
 
 
 def edit_hooks(document, kind, remove=False):
     hooks = document.setdefault("hooks", {})
-    ours = shlex.join([str(CLI), "_hook"]) + " "
+    # Earlier versions named the checkout's bin/rex-agents; those entries are ours too.
+    ours = ("rex-agents _hook ", shlex.join([str(CLI), "_hook"]) + " ")
     # Drop every entry of ours, including events earlier versions registered.
     for event in list(hooks):
         groups = []
