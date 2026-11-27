@@ -1411,7 +1411,8 @@ class InstallTests(Base):
         self.codex = self.home/".codex/hooks.json"
         core.atomic(self.claude, {"theme": "dark", "hooks": {
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": legacy}, {"type": "command", "command": "other"}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": install.hook_command("claude-code", "Stop")}]}]}})
+            "Stop": [{"hooks": [{"type": "command", "command": install.hook_command("claude-code", "Stop")}]}],
+            "SessionStart": [{"hooks": [{"type": "command", "command": f"{CLI} _hook claude-code SessionStart"}]}]}})
         core.atomic(self.codex, {"hooks": {"SessionEnd": [{"hooks": [
             {"type": "command", "command": install.hook_command("codex", "SessionEnd")}]}]}})
         self.init = self.home/".config/rex/init.lua"
@@ -1421,7 +1422,7 @@ class InstallTests(Base):
 
     def ours(self, path):
         document = core.read(path)
-        return {event: [g.get("matcher") for g in groups for h in g["hooks"] if h["command"].startswith(str(CLI))]
+        return {event: [g.get("matcher") for g in groups for h in g["hooks"] if h["command"].startswith("rex-agents _hook ")]
                 for event, groups in document.get("hooks", {}).items()} if document else {}
 
     def test_install_keeps_non_ascii_text(self):
@@ -1443,6 +1444,7 @@ class InstallTests(Base):
                           "PermissionRequest": [None]})
         self.assertEqual(self.ours(self.codex), {"SessionStart": [None], "PreToolUse": ["mcp__reason_network__ask_user"],
                                                  "PermissionRequest": [None]})
+        self.assertNotIn(str(CLI), self.claude.read_text() + self.codex.read_text())
         self.assertEqual(self.init.read_text(), "x = 1\n")
         self.assertFalse((self.init.parent/"rex_agents.lua").exists())
         self.assertEqual((self.home/".local/bin/rex-agents").resolve(), CLI.resolve())

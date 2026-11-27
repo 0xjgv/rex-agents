@@ -48,7 +48,7 @@ All code lives in `rex_agents/core.py` (`Integration`), `cli.py` (commands), and
 ## Install mechanics
 
 - CLI and skill are **symlinks** into the repo, so Python edits take effect immediately.
-- Hook commands embed the absolute `bin/rex-agents` path. Moving the repo breaks them. Changing hook definitions invalidates Codex hook trust; the user must re-trust via `/hooks`.
+- Hook commands name `rex-agents` and rely on PATH holding `~/.local/bin`, where install links it (`bin/rex-agents` needs PATH for `python3.13` anyway). Install migrates entries that named the checkout's `bin/rex-agents`. Changing hook definitions invalidates Codex hook trust; the user must re-trust via `/hooks`.
 - `edit_hooks` removes every hook entry whose command starts with this project's `_hook` command, including events earlier versions registered, then adds the current `EVENTS`.
 - Install and uninstall remove the legacy Lua module and `require` marker line from earlier versions; run `rex config reload` afterward.
 - Install takes a one-time backup. Uninstall removes hooks, links, the cache, and worker records. `_hook` does nothing when not installed.

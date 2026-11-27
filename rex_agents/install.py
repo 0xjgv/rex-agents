@@ -23,13 +23,17 @@ def paths(home):
     }
 
 
+COMMAND_ON_PATH = "rex-agents"
+LEGACY_HOOK_PREFIX = shlex.join([str(CLI), "_hook"]) + " "
+
+
 def hook_command(kind, event):
-    return shlex.join([str(CLI), "_hook", kind, event])
+    return shlex.join([COMMAND_ON_PATH, "_hook", kind, event])
 
 
 def edit_hooks(document, kind, remove=False):
     hooks = document.setdefault("hooks", {})
-    ours = shlex.join([str(CLI), "_hook"]) + " "
+    ours = (shlex.join([COMMAND_ON_PATH, "_hook"]) + " ", LEGACY_HOOK_PREFIX)
     # Drop every entry of ours, including events earlier versions registered.
     for event in list(hooks):
         groups = []
